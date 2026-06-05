@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -56,7 +57,7 @@ class ActivityCard(QFrame):
             }}
             QLabel#subtitle {{
                 color: #9ca3af;
-                font-size: 11px;
+                font-size: 12px;
             }}
             QLabel#badge {{
                 background: {border};
@@ -69,9 +70,16 @@ class ActivityCard(QFrame):
             """
         )
 
+        self.setFixedHeight(96)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(14)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self.image_label = QLabel()
         self.image_label.setFixedSize(184, 69)
@@ -79,14 +87,7 @@ class ActivityCard(QFrame):
         self.image_label.setStyleSheet(
             "background: #141414; border: 1px solid #333333; border-radius: 8px; color: #6b6b6b;"
         )
-        if status == "waiting":
-            self.image_label.setText("⏳")
-            self.image_label.setStyleSheet(
-                "background: #1a1508; border: 2px solid #fbbf24; border-radius: 8px;"
-                " color: #fbbf24; font-size: 28px;"
-            )
-        else:
-            self.image_label.setText("…")
+        self.image_label.setText("…")
         layout.addWidget(self.image_label)
 
         text_col = QVBoxLayout()
@@ -107,12 +108,14 @@ class ActivityCard(QFrame):
         self.subtitle_label.setObjectName("subtitle")
         self.subtitle_label.setWordWrap(True)
         text_col.addWidget(self.subtitle_label)
-
-        text_col.addStretch()
         layout.addLayout(text_col, stretch=1)
 
         if image_url and network is not None:
             self._load_image(image_url)
+
+    def update_content(self, title: str, subtitle: str) -> None:
+        self.title_label.setText(title)
+        self.subtitle_label.setText(subtitle)
 
     def _load_image(self, image_url: str) -> None:
         request = QNetworkRequest(QUrl(image_url))
@@ -151,6 +154,7 @@ class ManualSelectCard(ActivityCard):
             status="prompt",
             network=network,
         )
+        self.setFixedHeight(132)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
@@ -197,6 +201,7 @@ class ActivityFeed(QFrame):
         self._layout = QVBoxLayout(self._container)
         self._layout.setContentsMargins(4, 4, 4, 4)
         self._layout.setSpacing(10)
+        self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self._empty = QLabel(
             "No activity yet\n\n"
@@ -208,7 +213,8 @@ class ActivityFeed(QFrame):
         self._empty.setObjectName("emptyState")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty.setWordWrap(True)
-        self._layout.addWidget(self._empty, stretch=1)
+        self._layout.addWidget(self._empty)
+        self._layout.addStretch(1)
 
         self._scroll.setWidget(self._container)
 
@@ -216,6 +222,39 @@ class ActivityFeed(QFrame):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._scroll)
         self._network = network
+        self._waiting_card: ActivityCard | None = None
+
+    def _insert_card(self, widget: QWidget) -> None:
+        self._layout.insertWidget(self._layout.count() - 1, widget)
+
+    def set_waiting_card(
+        self,
+        title: str,
+        subtitle: str,
+        image_url: str = "",
+    ) -> None:
+        self._empty.hide()
+        if self._waiting_card is not None:
+            self._waiting_card.update_content(title, subtitle)
+        else:
+            self._waiting_card = ActivityCard(
+                title=title,
+                subtitle=subtitle,
+                image_url=image_url,
+                status="waiting",
+                network=self._network,
+            )
+            self._insert_card(self._waiting_card)
+        self._scroll.verticalScrollBar().setValue(0)
+
+    def clear_waiting_card(self) -> None:
+        if self._waiting_card is None:
+            return
+        self._layout.removeWidget(self._waiting_card)
+        self._waiting_card.deleteLater()
+        self._waiting_card = None
+        if self._layout.count() == 2:
+            self._empty.show()
 
     def add_card(
         self,
@@ -232,7 +271,8 @@ class ActivityFeed(QFrame):
             network=self._network,
         )
         self._empty.hide()
-        self._layout.addWidget(card)
+        self.clear_waiting_card()
+        self._insert_card(card)
         self._scroll.verticalScrollBar().setValue(
             self._scroll.verticalScrollBar().maximum()
         )
@@ -250,14 +290,16 @@ class ActivityFeed(QFrame):
             network=self._network,
         )
         self._empty.hide()
-        self._layout.addWidget(card)
+        self.clear_waiting_card()
+        self._insert_card(card)
         self._scroll.verticalScrollBar().setValue(
             self._scroll.verticalScrollBar().maximum()
         )
         return card
 
     def clear(self) -> None:
-        while self._layout.count() > 1:
+        self._waiting_card = None
+        while self._layout.count() > 2:
             item = self._layout.takeAt(1)
             widget = item.widget()
             if widget is not None:

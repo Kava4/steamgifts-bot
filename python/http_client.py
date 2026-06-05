@@ -55,14 +55,17 @@ class HttpClient:
 
         curl_bin = "curl.exe" if platform.system() == "Windows" else "curl"
 
+        run_kwargs: dict = {
+            "capture_output": True,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+        }
+        if platform.system() == "Windows":
+            run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
         try:
-            result = subprocess.run(
-                [curl_bin, *args],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
+            result = subprocess.run([curl_bin, *args], **run_kwargs)
         except FileNotFoundError as exc:
             raise RuntimeError(
                 "curl not found. Install curl or use Windows 10+ which includes curl.exe."

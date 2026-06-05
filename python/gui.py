@@ -561,14 +561,13 @@ class SteamgiftsWindow(QMainWindow):
             f"{timestamp} - Not enough Points for {name} ({cost}P). "
             f"Waiting {wait_minutes} minutes…"
         )
-        self.activity_feed.add_card(
-            title="Waiting for Points",
+        self.activity_feed.set_waiting_card(
+            title=name,
             subtitle=(
-                f"Not enough points ({current_points}P) for \"{name}\" ({cost}P). "
-                f"Waiting {wait_minutes} minutes…"
+                f"Need {cost}P · have {current_points}P · "
+                f"waiting {wait_minutes} min for more points"
             ),
             image_url=image_url,
-            status="waiting",
         )
 
     def _update_status(self, points: int, page: int) -> None:
