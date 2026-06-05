@@ -37,6 +37,3 @@ pyinstaller --noconfirm --clean `
 Write-Host ""
 Write-Host "Build complete!"
 Write-Host "Executable: $Root\dist\SteamGiftsBot.exe"
-Write-Host ""
-Write-Host "Place cookie.txt next to the exe before first run."
-Write-Host "Settings are stored in %APPDATA%\SteamGiftsBot\settings.json"

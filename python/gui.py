@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from bot import SteamgiftsBot
-from paths import get_app_dir, get_icon_path
+from paths import get_cookie_file, get_icon_path
 from settings import load_settings, save_settings
 from steamgifts_service import SteamgiftsService
 from theme import APP_STYLESHEET
@@ -38,9 +38,6 @@ try:
     WINDOWS_STARTUP_AVAILABLE = True
 except ImportError:
     WINDOWS_STARTUP_AVAILABLE = False
-
-COOKIE_FILE = get_app_dir() / "cookie.txt"
-
 
 def load_app_icon() -> QIcon:
     icon_path = get_icon_path()
@@ -375,12 +372,13 @@ class SteamgiftsWindow(QMainWindow):
         self.show_cookie_btn.setText("Hide" if self._cookie_visible else "Show")
 
     def _load_cookie(self) -> None:
-        if COOKIE_FILE.exists():
-            cookie = COOKIE_FILE.read_text(encoding="utf-8").strip()
+        cookie_file = get_cookie_file()
+        if cookie_file.exists():
+            cookie = cookie_file.read_text(encoding="utf-8").strip()
             if cookie:
                 self.cookie_input.setText(cookie)
                 self._cached_cookie = cookie
-                self._append_console("Loaded cookie from cookie.txt")
+                self._append_console(f"Loaded cookie from {cookie_file}")
 
     def _show_welcome_if_needed(self) -> None:
         if self.console_log.toPlainText():
@@ -400,10 +398,12 @@ class SteamgiftsWindow(QMainWindow):
                 QMessageBox.warning(self, "Cookie", "Enter PHPSESSID first.")
             return
 
-        COOKIE_FILE.write_text(cookie, encoding="utf-8")
+        cookie_file = get_cookie_file()
+        cookie_file.parent.mkdir(parents=True, exist_ok=True)
+        cookie_file.write_text(cookie, encoding="utf-8")
         self._cached_cookie = cookie
         if not silent:
-            self._append_console("Cookie saved to cookie.txt")
+            self._append_console(f"Cookie saved to {cookie_file}")
             QMessageBox.information(self, "Cookie", "Saved successfully.")
 
     def _fetch_points(self) -> None:

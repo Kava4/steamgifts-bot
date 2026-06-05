@@ -31,7 +31,7 @@ Download `SteamGiftsBot.exe` from [Releases](https://github.com/AimSyncCore/Stea
 2. Copy the `PHPSESSID` value
 3. In the app: paste → **Save**
 
-The cookie is saved to `cookie.txt` next to the exe (or in the project folder in dev mode).
+The cookie is saved to `%APPDATA%\SteamGiftsBot\cookie.txt`.
 
 ### 3. Usage
 
@@ -66,7 +66,7 @@ Output: `dist/SteamGiftsBot.exe`
 
 | File | Location | Description |
 |------|----------|-------------|
-| `cookie.txt` | Next to the exe | PHPSESSID session token |
+| `cookie.txt` | `%APPDATA%\SteamGiftsBot\` | PHPSESSID session token |
 | `settings.json` | `%APPDATA%\SteamGiftsBot\` | App settings |
 
 > Do not commit `cookie.txt` to GitHub — it contains your session token.
