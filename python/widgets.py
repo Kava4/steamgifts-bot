@@ -22,6 +22,7 @@ class ActivityCard(QFrame):
         status: str = "info",
         network: QNetworkAccessManager | None = None,
         ends_text: str = "",
+        source: str = "steamgifts",
     ):
         super().__init__()
         self.setObjectName("activityCard")
@@ -29,6 +30,7 @@ class ActivityCard(QFrame):
 
         colors = {
             "entered": ("#1f2a1f", "#3d5c3f", "#a3d9a5"),
+            "won": ("#2a2418", "#6b552e", "#f0c674"),
             "waiting": ("#2a2618", "#6b5a2e", "#d4b86a"),
             "prompt": ("#222222", "#4a4a4a", "#d4d4d4"),
             "skipped": ("#1c1c1c", "#3a3a3a", "#9ca3af"),
@@ -38,10 +40,15 @@ class ActivityCard(QFrame):
         bg, border, accent = colors.get(status, colors["info"])
         badge_text = {
             "entered": "ENTERED",
+            "won": "WON",
             "waiting": "WAITING",
             "prompt": "SELECT",
             "skipped": "SKIPPED",
         }.get(status, status.upper())
+        if status == "entered" and source == "indiegala":
+            badge_text = "INDIEGALA"
+        if status == "won" and source == "indiegala":
+            badge_text = "INDIEGALA WIN"
 
         self.setStyleSheet(
             f"""
@@ -171,6 +178,7 @@ class ManualSelectCard(ActivityCard):
         image_url: str,
         network: QNetworkAccessManager,
         ends_text: str = "",
+        source: str = "steamgifts",
     ):
         super().__init__(
             title=title,
@@ -179,6 +187,7 @@ class ManualSelectCard(ActivityCard):
             status="prompt",
             network=network,
             ends_text=ends_text,
+            source=source,
         )
         self.setFixedHeight(148 if ends_text else 132)
 
@@ -259,6 +268,7 @@ class ActivityFeed(QFrame):
         subtitle: str,
         image_url: str = "",
         ends_text: str = "",
+        source: str = "steamgifts",
     ) -> None:
         self._empty.hide()
         if self._waiting_card is not None:
@@ -271,6 +281,7 @@ class ActivityFeed(QFrame):
                 status="waiting",
                 network=self._network,
                 ends_text=ends_text,
+                source=source,
             )
             self._insert_card(self._waiting_card)
         self._scroll.verticalScrollBar().setValue(0)
@@ -291,6 +302,7 @@ class ActivityFeed(QFrame):
         image_url: str = "",
         status: str = "info",
         ends_text: str = "",
+        source: str = "steamgifts",
     ) -> None:
         card = ActivityCard(
             title=title,
@@ -299,6 +311,7 @@ class ActivityFeed(QFrame):
             status=status,
             network=self._network,
             ends_text=ends_text,
+            source=source,
         )
         self._empty.hide()
         self.clear_waiting_card()
@@ -313,6 +326,7 @@ class ActivityFeed(QFrame):
         subtitle: str,
         image_url: str,
         ends_text: str = "",
+        source: str = "steamgifts",
     ) -> ManualSelectCard:
         card = ManualSelectCard(
             title=title,
@@ -320,6 +334,7 @@ class ActivityFeed(QFrame):
             image_url=image_url,
             network=self._network,
             ends_text=ends_text,
+            source=source,
         )
         self._empty.hide()
         self.clear_waiting_card()
@@ -567,3 +582,77 @@ class EnteredFeed(QFrame):
         )
         if count == 0:
             self._empty.show()
+
+
+class WinsFeed(QFrame):
+    def __init__(self, network: QNetworkAccessManager):
+        super().__init__()
+
+        header = QHBoxLayout()
+        self.summary_label = QLabel("Giveaways you won · 0 total")
+        self.summary_label.setObjectName("settingHint")
+        header.addWidget(self.summary_label)
+        header.addStretch()
+        self.setLayout(QVBoxLayout())
+        self.layout().addLayout(header)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+        )
+
+        self._container = QWidget()
+        self._container.setStyleSheet("background: transparent;")
+        self._layout = QVBoxLayout(self._container)
+        self._layout.setContentsMargins(4, 4, 4, 4)
+        self._layout.setSpacing(10)
+        self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self._empty = QLabel(
+            "No wins tracked yet\n\n"
+            "When you win on SteamGifts or IndieGala, the bot will "
+            "alert you here and in the system tray."
+        )
+        self._empty.setObjectName("emptyState")
+        self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty.setWordWrap(True)
+        self._layout.addWidget(self._empty)
+        self._layout.addStretch(1)
+
+        self._scroll.setWidget(self._container)
+        self.layout().addWidget(self._scroll, stretch=1)
+        self._network = network
+
+    def set_wins(self, wins: list) -> None:
+        while self._layout.count() > 2:
+            item = self._layout.takeAt(1)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if not wins:
+            self._empty.show()
+            self.summary_label.setText("Giveaways you won · 0 total")
+            return
+
+        self._empty.hide()
+        self.summary_label.setText(
+            f"Giveaways you won · {len(wins)} total"
+        )
+
+        for win in wins:
+            source = getattr(win, "source", "steamgifts")
+            platform = "IndieGala" if source == "indiegala" else "SteamGifts"
+            card = ActivityCard(
+                title=win.name,
+                subtitle=f"Won on {platform} · claim on the website",
+                image_url=getattr(win, "image_url", ""),
+                status="won",
+                network=self._network,
+                source=source,
+            )
+            self._layout.insertWidget(self._layout.count() - 1, card)

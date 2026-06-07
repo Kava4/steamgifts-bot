@@ -31,6 +31,10 @@ def get_cookie_file() -> Path:
     return new_path
 
 
+def get_indiegala_cookie_file() -> Path:
+    return get_data_dir() / "indiegala_cookie.txt"
+
+
 def get_icon_path() -> Path:
     if getattr(sys, "frozen", False):
         bundled = Path(sys._MEIPASS) / "assets" / "icon.ico"

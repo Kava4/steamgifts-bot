@@ -9,6 +9,7 @@ Based on [stilManiac/steamgifts-bot](https://github.com/stilManiac/steamgifts-bo
 - Automatic giveaway entry
 - Activity feed with Steam game images
 - **Entered** tab — active joined giveaways with time remaining and Remove
+- **IndieGala (beta)** — optional auto-join on [indiegala.com/giveaways](https://www.indiegala.com/giveaways)
 - Manual select (Yes/No per giveaway)
 - Smart wait when points are insufficient
 - System tray — bot keeps running in the background
@@ -30,9 +31,20 @@ Download `SteamGiftsBot.exe` from [Releases](https://github.com/AimSyncCore/Stea
 
 1. Open DevTools (F12) → **Application** → **Cookies** → `steamgifts.com`
 2. Copy the `PHPSESSID` value
-3. In the app: paste → **Save**
+3. In the app: **Settings → Accounts** → paste → **Save**
 
 The cookie is saved to `%APPDATA%\SteamGiftsBot\cookie.txt`.
+
+### IndieGala (beta)
+
+1. Log in at [indiegala.com](https://www.indiegala.com/)
+2. DevTools → **Cookies** → copy `sessionid` (and `csrftoken` if available)
+3. Sidebar → **Settings → Accounts** → paste → **Save**
+4. Enable **Enable IndieGala giveaways** and set entry delay / **minimum cost** below
+
+After each SteamGifts page, the bot scans the matching IndieGala page. Use a **slow entry delay** (5+ sec) — fast automation can trigger IndieGala rate limits.
+
+Cookie file: `%APPDATA%\SteamGiftsBot\indiegala_cookie.txt`
 
 ### 3. Usage
 
@@ -72,6 +84,7 @@ Output: `dist/SteamGiftsBot.exe`
 | File | Location | Description |
 |------|----------|-------------|
 | `cookie.txt` | `%APPDATA%\SteamGiftsBot\` | PHPSESSID session token |
+| `indiegala_cookie.txt` | `%APPDATA%\SteamGiftsBot\` | IndieGala sessionid (beta) |
 | `settings.json` | `%APPDATA%\SteamGiftsBot\` | App settings |
 
 > Do not commit `cookie.txt` to GitHub — it contains your session token.

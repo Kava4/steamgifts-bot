@@ -55,6 +55,13 @@ QLabel#contentSubheader {
     margin-top: -4px;
 }
 
+QLabel#contentBalances {
+    color: #a3d9a5;
+    font-size: 13px;
+    font-weight: 600;
+    padding-top: 4px;
+}
+
 QLabel#countdownLabel {
     color: #d4b86a;
     font-size: 12px;
@@ -168,6 +175,16 @@ QLabel#statusPillStopped {
     border-radius: 999px;
     padding: 8px 16px;
     font-weight: 700;
+    font-size: 11px;
+}
+
+QPlainTextEdit#indiegalaCookieInput {
+    background: #111111;
+    border: 1px solid #333333;
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: #f0f0f0;
+    font-family: "Cascadia Mono", "Consolas", monospace;
     font-size: 11px;
 }
 

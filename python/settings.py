@@ -10,6 +10,10 @@ DEFAULTS = {
     "manual_select_giveaways": False,
     "refresh_delay_minutes": 10,
     "max_pages": 5,
+    "enable_indiegala_beta": False,
+    "indiegala_entry_delay": 5,
+    "indiegala_min_cost": 0,
+    "notify_on_win": True,
 }
 
 REFRESH_MINUTE_OPTIONS = (5, 10, 15)
@@ -44,6 +48,12 @@ def load_settings() -> dict:
         settings["refresh_delay_minutes"] = DEFAULTS["refresh_delay_minutes"]
 
     settings["max_pages"] = max(1, min(int(settings["max_pages"]), 50))
+    settings["indiegala_entry_delay"] = max(
+        3, min(int(settings.get("indiegala_entry_delay", 5)), 30)
+    )
+    settings["indiegala_min_cost"] = max(
+        0, min(int(settings.get("indiegala_min_cost", 0)), 100)
+    )
     return settings
 
 
@@ -56,4 +66,10 @@ def save_settings(settings: dict) -> None:
         payload["refresh_delay_minutes"] = DEFAULTS["refresh_delay_minutes"]
 
     payload["max_pages"] = max(1, min(int(payload["max_pages"]), 50))
+    payload["indiegala_entry_delay"] = max(
+        3, min(int(payload.get("indiegala_entry_delay", 5)), 30)
+    )
+    payload["indiegala_min_cost"] = max(
+        0, min(int(payload.get("indiegala_min_cost", 0)), 100)
+    )
     settings_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")

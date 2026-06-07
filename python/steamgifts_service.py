@@ -54,6 +54,8 @@ class GiveawayInfo:
     is_entered: bool
     ends_at: Optional[int] = None
     ends_label: str = ""
+    source: str = "steamgifts"
+    join_token: str = ""
 
 
 @dataclass
@@ -67,6 +69,15 @@ class EnteredGiveawayInfo:
     entries_count: str
     entered_label: str
     xsrf_token: str
+
+
+@dataclass
+class WonGiveawayInfo:
+    name: str
+    code: str
+    image_url: str
+    source: str = "steamgifts"
+    url: str = ""
 
 
 def build_headers(cookie: str) -> dict[str, str]:
@@ -309,6 +320,68 @@ def parse_entered_row(element) -> Optional[EnteredGiveawayInfo]:
     )
 
 
+def parse_won_notification_count(html: str) -> Optional[int]:
+    soup = BeautifulSoup(html, "html.parser")
+    nav = soup.select_one(".nav__right-container")
+    if nav is None:
+        return None
+
+    for link in nav.select("a[href*='/giveaways/won']"):
+        badge = link.select_one(".nav__notification")
+        if badge is None:
+            continue
+        text = badge.get_text(strip=True)
+        if text.isdigit():
+            return int(text)
+
+    return None
+
+
+def parse_won_row(element) -> Optional[WonGiveawayInfo]:
+    if element.select_one('form input[name="do"][value="entry_delete"]'):
+        return None
+
+    heading_el = element.select_one(".table__column__heading")
+    if heading_el is None:
+        return None
+
+    href = heading_el.get("href", "")
+    for faded in heading_el.select(".is-faded"):
+        faded.decompose()
+
+    name = heading_el.get_text(strip=True) or "Unknown"
+    code = ""
+    if href:
+        parts = href.strip("/").split("/")
+        if len(parts) >= 2 and parts[0] == "giveaway":
+            code = parts[1]
+
+    if not code:
+        return None
+
+    url = href if href.startswith("http") else f"https://www.steamgifts.com{href}"
+
+    return WonGiveawayInfo(
+        name=name,
+        code=code,
+        image_url=parse_thumbnail_url(element),
+        source="steamgifts",
+        url=url,
+    )
+
+
+def parse_won_page(html: str) -> list[WonGiveawayInfo]:
+    soup = BeautifulSoup(html, "html.parser")
+    giveaways: list[WonGiveawayInfo] = []
+
+    for row in soup.select(".table__row-inner-wrap"):
+        info = parse_won_row(row)
+        if info is not None:
+            giveaways.append(info)
+
+    return giveaways
+
+
 def parse_entered_page(html: str) -> list[EnteredGiveawayInfo]:
     soup = BeautifulSoup(html, "html.parser")
     giveaways: list[EnteredGiveawayInfo] = []
@@ -370,6 +443,10 @@ class SteamgiftsService:
     def fetch_entered_giveaways(self) -> list[EnteredGiveawayInfo]:
         html = self._fetch("https://www.steamgifts.com/giveaways/entered")
         return parse_entered_page(html)
+
+    def fetch_won_giveaways(self) -> list[WonGiveawayInfo]:
+        html = self._fetch("https://www.steamgifts.com/giveaways/won")
+        return parse_won_page(html)
 
     def remove_entry(self, code: str, xsrf_token: str) -> None:
         payload = f"xsrf_token={xsrf_token}&do=entry_delete&code={code}"

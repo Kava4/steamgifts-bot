@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -28,7 +29,8 @@ from PyQt6.QtWidgets import (
 )
 
 from bot import SteamgiftsBot
-from paths import get_cookie_file, get_icon_path
+from indiegala_service import IndieGalaService, format_indiegala_cookie_storage
+from paths import get_cookie_file, get_icon_path, get_indiegala_cookie_file
 from settings import REFRESH_MINUTE_OPTIONS, load_settings, save_settings
 from steamgifts_service import (
     EnteredGiveawayInfo,
@@ -36,7 +38,8 @@ from steamgifts_service import (
     format_giveaway_ends,
 )
 from theme import APP_STYLESHEET
-from widgets import ActivityFeed, EnteredFeed
+from widgets import ActivityFeed, EnteredFeed, WinsFeed
+from wins_tracker import WinsTracker
 
 try:
     import windows_startup
@@ -84,6 +87,22 @@ class FetchEnteredWorker(QThread):
             self.failed.emit(str(error))
 
 
+class FetchIndieGalaWorker(QThread):
+    finished = pyqtSignal(int, str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, cookie: str):
+        super().__init__()
+        self.cookie = cookie
+
+    def run(self) -> None:
+        try:
+            account = IndieGalaService(self.cookie).fetch_account()
+            self.finished.emit(account.silver, account.username)
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
 class RemoveEntryWorker(QThread):
     finished = pyqtSignal(str)
     failed = pyqtSignal(str, str)
@@ -104,10 +123,11 @@ class RemoveEntryWorker(QThread):
 
 class BotSignals(QObject):
     log = pyqtSignal(str)
-    entry = pyqtSignal(str, str, int, str, str)
-    waiting_points = pyqtSignal(str, str, int, int, int, str)
-    manual_prompt = pyqtSignal(str, str, str, int, str)
-    status = pyqtSignal(int, int)
+    entry = pyqtSignal(str, str, int, str, str, str)
+    win = pyqtSignal(str, str, str, str)
+    waiting_points = pyqtSignal(str, str, int, int, int, str, str)
+    manual_prompt = pyqtSignal(str, str, str, int, str, str)
+    status = pyqtSignal(int, int, str)
     countdown = pyqtSignal(str, int)
 
 
@@ -117,12 +137,18 @@ class SteamgiftsWindow(QMainWindow):
 
         self.bot: SteamgiftsBot | None = None
         self._cached_cookie = ""
+        self._cached_indiegala_cookie = ""
         self._cookie_visible = False
         self._points_worker: FetchPointsWorker | None = None
         self._entered_worker: FetchEnteredWorker | None = None
+        self._indiegala_worker: FetchIndieGalaWorker | None = None
         self._remove_worker: RemoveEntryWorker | None = None
         self._entered_tab_index = -1
+        self._wins_tab_index = -1
         self._force_quit = False
+        self._steamgifts_points: int | None = None
+        self._indiegala_silver: int | None = None
+        self._wins_tracker = WinsTracker()
         self.settings = load_settings()
         self._app_icon = load_app_icon()
 
@@ -130,6 +156,7 @@ class SteamgiftsWindow(QMainWindow):
         self.signals = BotSignals()
         self.signals.log.connect(self._on_system_log)
         self.signals.entry.connect(self._on_entry)
+        self.signals.win.connect(self._on_win)
         self.signals.waiting_points.connect(self._on_waiting_points)
         self.signals.manual_prompt.connect(self._on_manual_prompt)
         self.signals.status.connect(self._update_status)
@@ -196,35 +223,6 @@ class SteamgiftsWindow(QMainWindow):
         stats_row.addWidget(self.points_card)
         stats_row.addWidget(self.page_card)
         sidebar_layout.addLayout(stats_row)
-
-        sidebar_layout.addWidget(self._section_label("SESSION"))
-
-        cookie_panel = QFrame()
-        cookie_panel.setObjectName("panel")
-        cookie_layout = QVBoxLayout(cookie_panel)
-        cookie_layout.setContentsMargins(12, 12, 12, 12)
-        cookie_layout.setSpacing(8)
-
-        cookie_hint = QLabel("PHPSESSID from DevTools → Cookies")
-        cookie_hint.setObjectName("hint")
-        cookie_hint.setWordWrap(True)
-        cookie_layout.addWidget(cookie_hint)
-
-        self.cookie_input = QLineEdit()
-        self.cookie_input.setPlaceholderText("PHPSESSID")
-        self.cookie_input.setEchoMode(QLineEdit.EchoMode.Password)
-        cookie_layout.addWidget(self.cookie_input)
-
-        cookie_btns = QHBoxLayout()
-        cookie_btns.setSpacing(8)
-        self.show_cookie_btn = QPushButton("Show")
-        self.show_cookie_btn.clicked.connect(self._toggle_cookie_visibility)
-        self.save_cookie_btn = QPushButton("Save")
-        self.save_cookie_btn.clicked.connect(self._save_cookie)
-        cookie_btns.addWidget(self.show_cookie_btn)
-        cookie_btns.addWidget(self.save_cookie_btn)
-        cookie_layout.addLayout(cookie_btns)
-        sidebar_layout.addWidget(cookie_panel)
 
         sidebar_layout.addWidget(self._section_label("CONTROLS"))
 
@@ -293,6 +291,12 @@ class SteamgiftsWindow(QMainWindow):
         self.content_subheader = QLabel("Giveaway entries and bot status")
         self.content_subheader.setObjectName("contentSubheader")
         header_block.addWidget(self.content_subheader)
+
+        self.content_balances_label = QLabel("")
+        self.content_balances_label.setObjectName("contentBalances")
+        self.content_balances_label.hide()
+        header_block.addWidget(self.content_balances_label)
+
         content_layout.addLayout(header_block)
         content_layout.addSpacing(6)
 
@@ -317,6 +321,14 @@ class SteamgiftsWindow(QMainWindow):
         self.entered_feed.remove_requested.connect(self._remove_entered)
         entered_layout.addWidget(self.entered_feed)
         self._entered_tab_index = self.tabs.addTab(entered_tab, "Entered")
+
+        wins_tab = QWidget()
+        wins_layout = QVBoxLayout(wins_tab)
+        wins_layout.setContentsMargins(14, 14, 14, 14)
+        wins_layout.setSpacing(0)
+        self.wins_feed = WinsFeed(self.network)
+        wins_layout.addWidget(self.wins_feed)
+        self._wins_tab_index = self.tabs.addTab(wins_tab, "Wins")
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
         console_tab = QWidget()
@@ -331,8 +343,111 @@ class SteamgiftsWindow(QMainWindow):
 
         settings_tab = QWidget()
         settings_tab_layout = QVBoxLayout(settings_tab)
-        settings_tab_layout.setContentsMargins(18, 18, 18, 18)
-        settings_tab_layout.setSpacing(16)
+        settings_tab_layout.setContentsMargins(0, 0, 0, 0)
+        settings_tab_layout.setSpacing(0)
+
+        settings_scroll = QScrollArea()
+        settings_scroll.setWidgetResizable(True)
+        settings_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        settings_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        settings_scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+        )
+
+        settings_inner = QWidget()
+        settings_inner_layout = QVBoxLayout(settings_inner)
+        settings_inner_layout.setContentsMargins(18, 18, 18, 18)
+        settings_inner_layout.setSpacing(16)
+
+        accounts_panel = QFrame()
+        accounts_panel.setObjectName("settingsSection")
+        accounts_layout = QVBoxLayout(accounts_panel)
+        accounts_layout.setContentsMargins(20, 18, 20, 18)
+        accounts_layout.setSpacing(14)
+
+        accounts_title = QLabel("ACCOUNTS")
+        accounts_title.setObjectName("sectionTitle")
+        accounts_layout.addWidget(accounts_title)
+
+        steam_label = QLabel("SteamGifts · PHPSESSID")
+        steam_label.setObjectName("settingLabel")
+        accounts_layout.addWidget(steam_label)
+
+        steam_hint = QLabel(
+            "DevTools → Application → Cookies → steamgifts.com → PHPSESSID"
+        )
+        steam_hint.setObjectName("settingHint")
+        steam_hint.setWordWrap(True)
+        accounts_layout.addWidget(steam_hint)
+
+        self.cookie_input = QLineEdit()
+        self.cookie_input.setPlaceholderText("PHPSESSID")
+        self.cookie_input.setEchoMode(QLineEdit.EchoMode.Password)
+        accounts_layout.addWidget(self.cookie_input)
+
+        steam_btns = QHBoxLayout()
+        steam_btns.setSpacing(8)
+        self.show_cookie_btn = QPushButton("Show")
+        self.show_cookie_btn.clicked.connect(self._toggle_cookie_visibility)
+        self.save_cookie_btn = QPushButton("Save")
+        self.save_cookie_btn.setObjectName("accentBtn")
+        self.save_cookie_btn.clicked.connect(self._save_cookie)
+        steam_btns.addWidget(self.show_cookie_btn)
+        steam_btns.addWidget(self.save_cookie_btn)
+        steam_btns.addStretch()
+        accounts_layout.addLayout(steam_btns)
+
+        accounts_divider = QFrame()
+        accounts_divider.setObjectName("settingDivider")
+        accounts_divider.setFixedHeight(1)
+        accounts_layout.addWidget(accounts_divider)
+
+        indiegala_label = QLabel("IndieGala (beta)")
+        indiegala_label.setObjectName("settingLabel")
+        accounts_layout.addWidget(indiegala_label)
+
+        self.enable_indiegala_checkbox = QCheckBox("Enable IndieGala giveaways")
+        self.enable_indiegala_checkbox.setToolTip(
+            "Scan indiegala.com/giveaways after each SteamGifts page. "
+            "Use a slower entry delay to reduce ban risk."
+        )
+        self.enable_indiegala_checkbox.toggled.connect(self._on_indiegala_toggled)
+        accounts_layout.addWidget(self.enable_indiegala_checkbox)
+
+        indiegala_hint = QLabel(
+            "Paste full JSON export from Cookie-Editor / DevTools, "
+            "or sessionid=...; csrftoken=..."
+        )
+        indiegala_hint.setObjectName("settingHint")
+        indiegala_hint.setWordWrap(True)
+        accounts_layout.addWidget(indiegala_hint)
+
+        self.indiegala_cookie_input = QPlainTextEdit()
+        self.indiegala_cookie_input.setPlaceholderText(
+            "JSON cookie export or sessionid=...; csrftoken=..."
+        )
+        self.indiegala_cookie_input.setFixedHeight(88)
+        self.indiegala_cookie_input.setObjectName("indiegalaCookieInput")
+        accounts_layout.addWidget(self.indiegala_cookie_input)
+
+        indiegala_btns = QHBoxLayout()
+        indiegala_btns.setSpacing(8)
+        self.test_indiegala_btn = QPushButton("Test Session")
+        self.test_indiegala_btn.setObjectName("accentBtn")
+        self.test_indiegala_btn.clicked.connect(self._test_indiegala)
+        self.save_indiegala_cookie_btn = QPushButton("Save")
+        self.save_indiegala_cookie_btn.clicked.connect(self._save_indiegala_cookie)
+        indiegala_btns.addWidget(self.test_indiegala_btn)
+        indiegala_btns.addWidget(self.save_indiegala_cookie_btn)
+        indiegala_btns.addStretch()
+        accounts_layout.addLayout(indiegala_btns)
+
+        accounts_panel.setMaximumWidth(640)
+        settings_inner_layout.addWidget(
+            accounts_panel, alignment=Qt.AlignmentFlag.AlignTop
+        )
 
         bot_settings_panel = QFrame()
         bot_settings_panel.setObjectName("settingsSection")
@@ -378,18 +493,80 @@ class SteamgiftsWindow(QMainWindow):
             )
         )
 
-        settings_tab_layout.addWidget(
+        divider2 = QFrame()
+        divider2.setObjectName("settingDivider")
+        divider2.setFixedHeight(1)
+        bot_settings_layout.addSpacing(14)
+        bot_settings_layout.addWidget(divider2)
+        bot_settings_layout.addSpacing(14)
+
+        self.indiegala_delay_spin = QSpinBox()
+        self.indiegala_delay_spin.setRange(3, 30)
+        self.indiegala_delay_spin.setSuffix(" sec")
+        self.indiegala_delay_spin.setFixedWidth(148)
+        self.indiegala_delay_spin.valueChanged.connect(
+            self._on_indiegala_delay_changed
+        )
+        bot_settings_layout.addWidget(
+            self._create_setting_row(
+                "IndieGala entry delay (beta)",
+                "Seconds between IndieGala joins. Keep this higher to avoid rate limits.",
+                self.indiegala_delay_spin,
+            )
+        )
+
+        self.indiegala_min_cost_spin = QSpinBox()
+        self.indiegala_min_cost_spin.setRange(0, 100)
+        self.indiegala_min_cost_spin.setSpecialValueText("Off")
+        self.indiegala_min_cost_spin.setSuffix(" iS")
+        self.indiegala_min_cost_spin.setFixedWidth(148)
+        self.indiegala_min_cost_spin.valueChanged.connect(
+            self._on_indiegala_min_cost_changed
+        )
+        bot_settings_layout.addWidget(
+            self._create_setting_row(
+                "IndieGala minimum cost",
+                "Skip giveaways below this ticket price. Use 3+ to avoid cheap junk. 0 = off.",
+                self.indiegala_min_cost_spin,
+            )
+        )
+
+        divider3 = QFrame()
+        divider3.setObjectName("settingDivider")
+        divider3.setFixedHeight(1)
+        bot_settings_layout.addSpacing(14)
+        bot_settings_layout.addWidget(divider3)
+        bot_settings_layout.addSpacing(14)
+
+        self.notify_on_win_checkbox = QCheckBox("Notify when you win a giveaway")
+        self.notify_on_win_checkbox.setToolTip(
+            "Shows a win card in Activity, updates the Wins tab, "
+            "and sends a system tray notification."
+        )
+        self.notify_on_win_checkbox.toggled.connect(self._on_notify_on_win_toggled)
+        bot_settings_layout.addWidget(self.notify_on_win_checkbox)
+
+        settings_inner_layout.addWidget(
             bot_settings_panel, alignment=Qt.AlignmentFlag.AlignTop
         )
         bot_settings_panel.setMaximumWidth(640)
-        settings_tab_layout.addStretch()
+        settings_inner_layout.addStretch()
+
+        settings_scroll.setWidget(settings_inner)
+        settings_tab_layout.addWidget(settings_scroll)
         self._settings_tab_index = self.tabs.addTab(settings_tab, "Settings")
 
         root.addWidget(content, stretch=1)
 
     def _format_ends_text(
-        self, ends_label: str = "", ends_at: int | None = None
+        self,
+        ends_label: str = "",
+        ends_at: int | None = None,
+        source: str = "steamgifts",
     ) -> str:
+        if source == "indiegala" and ends_label:
+            return ends_label
+
         text = format_giveaway_ends(ends_at, ends_label)
         return f"Ends · {text}" if text else ""
 
@@ -479,6 +656,9 @@ class SteamgiftsWindow(QMainWindow):
     def _apply_settings_to_ui(self) -> None:
         self.tray_close_checkbox.setChecked(self.settings["minimize_to_tray_on_close"])
         self.manual_select_checkbox.setChecked(self.settings["manual_select_giveaways"])
+        self.enable_indiegala_checkbox.setChecked(
+            self.settings.get("enable_indiegala_beta", False)
+        )
 
         refresh_minutes = self.settings.get("refresh_delay_minutes", 10)
         refresh_index = REFRESH_MINUTE_OPTIONS.index(refresh_minutes)
@@ -490,10 +670,55 @@ class SteamgiftsWindow(QMainWindow):
         self.max_pages_spin.setValue(self.settings.get("max_pages", 5))
         self.max_pages_spin.blockSignals(False)
 
+        self.indiegala_delay_spin.blockSignals(True)
+        self.indiegala_delay_spin.setValue(
+            self.settings.get("indiegala_entry_delay", 5)
+        )
+        self.indiegala_delay_spin.blockSignals(False)
+
+        self.indiegala_min_cost_spin.blockSignals(True)
+        self.indiegala_min_cost_spin.setValue(
+            self.settings.get("indiegala_min_cost", 0)
+        )
+        self.indiegala_min_cost_spin.blockSignals(False)
+
+        self.notify_on_win_checkbox.setChecked(
+            self.settings.get("notify_on_win", True)
+        )
+
         if WINDOWS_STARTUP_AVAILABLE:
             actual_startup = windows_startup.is_startup_enabled()
             self.settings["start_with_windows"] = actual_startup
             self.startup_checkbox.setChecked(actual_startup)
+
+        self._update_balance_header()
+        self._refresh_wins_tab()
+
+    def _refresh_wins_tab(self) -> None:
+        self.wins_feed.set_wins(self._wins_tracker.all_wins())
+
+    def _on_notify_on_win_toggled(self, checked: bool) -> None:
+        self.settings["notify_on_win"] = checked
+        self._persist_settings()
+
+    def _update_balance_header(self) -> None:
+        if not self.settings.get("enable_indiegala_beta", False):
+            self.content_balances_label.hide()
+            return
+
+        parts: list[str] = []
+        if self._steamgifts_points is not None:
+            parts.append(f"SteamGifts {self._steamgifts_points} P")
+        if self._indiegala_silver is not None:
+            parts.append(f"IndieGala {self._indiegala_silver} iS")
+
+        if parts:
+            self.content_balances_label.setText(" · ".join(parts))
+        else:
+            self.content_balances_label.setText(
+                "Balances update when you fetch points or run the bot"
+            )
+        self.content_balances_label.show()
 
     def _persist_settings(self) -> None:
         save_settings(self.settings)
@@ -525,6 +750,27 @@ class SteamgiftsWindow(QMainWindow):
                 self.settings.get("refresh_delay_minutes", 10), value
             )
 
+    def _on_indiegala_toggled(self, checked: bool) -> None:
+        self.settings["enable_indiegala_beta"] = checked
+        self._persist_settings()
+        self._update_balance_header()
+
+    def _on_indiegala_delay_changed(self, value: int) -> None:
+        self.settings["indiegala_entry_delay"] = value
+        self._persist_settings()
+        if self.bot:
+            self.bot.apply_indiegala_settings(
+                value, self.settings.get("indiegala_min_cost", 0)
+            )
+
+    def _on_indiegala_min_cost_changed(self, value: int) -> None:
+        self.settings["indiegala_min_cost"] = value
+        self._persist_settings()
+        if self.bot:
+            self.bot.apply_indiegala_settings(
+                self.settings.get("indiegala_entry_delay", 5), value
+            )
+
     def _on_startup_toggled(self, checked: bool) -> None:
         if not WINDOWS_STARTUP_AVAILABLE:
             return
@@ -553,6 +799,9 @@ class SteamgiftsWindow(QMainWindow):
         )
         self.show_cookie_btn.setText("Hide" if self._cookie_visible else "Show")
 
+    def _indiegala_cookie_text(self) -> str:
+        return self.indiegala_cookie_input.toPlainText().strip()
+
     def _load_cookie(self) -> None:
         cookie_file = get_cookie_file()
         if cookie_file.exists():
@@ -562,6 +811,14 @@ class SteamgiftsWindow(QMainWindow):
                 self._cached_cookie = cookie
                 self._append_console(f"Loaded cookie from {cookie_file}")
 
+        indiegala_file = get_indiegala_cookie_file()
+        if indiegala_file.exists():
+            cookie = indiegala_file.read_text(encoding="utf-8").strip()
+            if cookie:
+                self.indiegala_cookie_input.setPlainText(cookie)
+                self._cached_indiegala_cookie = cookie
+                self._append_console(f"Loaded IndieGala cookie from {indiegala_file}")
+
     def _show_welcome_if_needed(self) -> None:
         if self.console_log.toPlainText():
             return
@@ -569,7 +826,7 @@ class SteamgiftsWindow(QMainWindow):
             self._append_console("Ready. Click Fetch Points or Start Bot.")
         else:
             self._append_console(
-                "Welcome! Paste your PHPSESSID in the sidebar, click Save, "
+                "Welcome! Open Settings, paste your PHPSESSID, click Save, "
                 "then Start Bot."
             )
 
@@ -577,7 +834,9 @@ class SteamgiftsWindow(QMainWindow):
         cookie = self.cookie_input.text().strip()
         if not cookie:
             if not silent:
-                QMessageBox.warning(self, "Cookie", "Enter PHPSESSID first.")
+                QMessageBox.warning(
+                self, "Cookie", "Enter PHPSESSID in Settings → Accounts first."
+            )
             return
 
         cookie_file = get_cookie_file()
@@ -588,10 +847,80 @@ class SteamgiftsWindow(QMainWindow):
             self._append_console(f"Cookie saved to {cookie_file}")
             QMessageBox.information(self, "Cookie", "Saved successfully.")
 
+    def _save_indiegala_cookie(self, silent: bool = False) -> str:
+        cookie = self._indiegala_cookie_text()
+        if not cookie:
+            if not silent:
+                QMessageBox.warning(self, "IndieGala", "Paste your cookie first.")
+            return ""
+
+        try:
+            normalized = format_indiegala_cookie_storage(cookie)
+        except ValueError as error:
+            if not silent:
+                QMessageBox.warning(self, "IndieGala", str(error))
+            return ""
+
+        cookie_file = get_indiegala_cookie_file()
+        cookie_file.parent.mkdir(parents=True, exist_ok=True)
+        cookie_file.write_text(normalized, encoding="utf-8")
+        self._cached_indiegala_cookie = normalized
+        self.indiegala_cookie_input.setPlainText(normalized)
+        if not silent:
+            self._append_console(f"IndieGala cookie saved to {cookie_file}")
+            QMessageBox.information(
+                self,
+                "IndieGala",
+                "Saved. sessionid and csrftoken were extracted.",
+            )
+        return normalized
+
+    def _test_indiegala(self) -> None:
+        cookie = self._save_indiegala_cookie(silent=True) or self._indiegala_cookie_text()
+        if not cookie:
+            QMessageBox.warning(self, "IndieGala", "Paste and save your cookie first.")
+            return
+
+        if self._indiegala_worker and self._indiegala_worker.isRunning():
+            return
+
+        self.test_indiegala_btn.setEnabled(False)
+        self.test_indiegala_btn.setText("Testing…")
+        self._indiegala_worker = FetchIndieGalaWorker(cookie)
+        self._indiegala_worker.finished.connect(self._on_indiegala_test_ok)
+        self._indiegala_worker.failed.connect(self._on_indiegala_test_failed)
+        self._indiegala_worker.finished.connect(
+            lambda: self.test_indiegala_btn.setEnabled(True)
+        )
+        self._indiegala_worker.finished.connect(
+            lambda: self.test_indiegala_btn.setText("Test Session")
+        )
+        self._indiegala_worker.failed.connect(
+            lambda: self.test_indiegala_btn.setEnabled(True)
+        )
+        self._indiegala_worker.failed.connect(
+            lambda: self.test_indiegala_btn.setText("Test Session")
+        )
+        self._indiegala_worker.start()
+
+    def _on_indiegala_test_ok(self, silver: int, username: str) -> None:
+        user_part = f" as {username}" if username else ""
+        msg = f"IndieGala session OK{user_part} · Silver: {silver} iS"
+        self._indiegala_silver = silver
+        self._update_balance_header()
+        self._append_console(msg)
+        QMessageBox.information(self, "IndieGala", msg)
+
+    def _on_indiegala_test_failed(self, message: str) -> None:
+        self._append_console(f"IndieGala session failed: {message}")
+        QMessageBox.warning(self, "IndieGala", message)
+
     def _fetch_points(self) -> None:
         cookie = self.cookie_input.text().strip()
         if not cookie:
-            QMessageBox.warning(self, "Points", "Enter PHPSESSID first.")
+            QMessageBox.warning(
+                self, "Points", "Enter PHPSESSID in Settings → Accounts first."
+            )
             return
 
         if self._points_worker and self._points_worker.isRunning():
@@ -618,7 +947,9 @@ class SteamgiftsWindow(QMainWindow):
         self._points_worker.start()
 
     def _on_points_fetched(self, points: int, username: str) -> None:
+        self._steamgifts_points = points
         self.points_card.value_label.setText(str(points))
+        self._update_balance_header()
         user_part = f" ({username})" if username else ""
         msg = f"Fetched points: {points}{user_part}"
         self._append_console(msg)
@@ -644,13 +975,17 @@ class SteamgiftsWindow(QMainWindow):
                 "Entered",
                 "Active giveaways you joined on SteamGifts",
             ),
+            self._wins_tab_index: (
+                "Wins",
+                "Giveaways you won on SteamGifts or IndieGala",
+            ),
             self._console_tab_index: (
                 "Console",
                 "All bot events in real time",
             ),
             self._settings_tab_index: (
                 "Settings",
-                "Bot scan interval and pagination",
+                "Accounts, cookies, and bot behavior",
             ),
         }
         title, subtitle = headers.get(index, ("SteamGifts Bot", ""))
@@ -659,11 +994,17 @@ class SteamgiftsWindow(QMainWindow):
 
         if index == self._entered_tab_index:
             self._refresh_entered()
+        elif index == self._wins_tab_index:
+            self._refresh_wins_tab()
 
     def _refresh_entered(self) -> None:
         cookie = self.cookie_input.text().strip()
         if not cookie:
-            QMessageBox.warning(self, "Entered", "Enter PHPSESSID first.")
+            QMessageBox.warning(
+                self,
+                "Entered",
+                "Enter PHPSESSID in Settings → Accounts first.",
+            )
             return
 
         if self._entered_worker and self._entered_worker.isRunning():
@@ -694,7 +1035,11 @@ class SteamgiftsWindow(QMainWindow):
     def _remove_entered(self, code: str, xsrf_token: str) -> None:
         cookie = self.cookie_input.text().strip()
         if not cookie:
-            QMessageBox.warning(self, "Entered", "Enter PHPSESSID first.")
+            QMessageBox.warning(
+                self,
+                "Entered",
+                "Enter PHPSESSID in Settings → Accounts first.",
+            )
             return
 
         if self._remove_worker and self._remove_worker.isRunning():
@@ -717,7 +1062,21 @@ class SteamgiftsWindow(QMainWindow):
     def _start_bot(self) -> None:
         cookie = self.cookie_input.text().strip()
         if not cookie:
-            QMessageBox.warning(self, "Cookie", "Enter PHPSESSID before starting.")
+            QMessageBox.warning(
+                self,
+                "Cookie",
+                "Enter PHPSESSID in Settings → Accounts before starting.",
+            )
+            return
+
+        enable_indiegala = self.settings.get("enable_indiegala_beta", False)
+        indiegala_cookie = self._save_indiegala_cookie(silent=True) or self._indiegala_cookie_text()
+        if enable_indiegala and not indiegala_cookie:
+            QMessageBox.warning(
+                self,
+                "IndieGala",
+                "Enable IndieGala is on — set your cookie in Settings → Accounts.",
+            )
             return
 
         if self.bot and self.bot.is_running:
@@ -728,15 +1087,27 @@ class SteamgiftsWindow(QMainWindow):
             manual_select=self.settings.get("manual_select_giveaways", False),
             refresh_delay_minutes=self.settings.get("refresh_delay_minutes", 10),
             max_pages=self.settings.get("max_pages", 5),
+            indiegala_cookie=indiegala_cookie,
+            enable_indiegala=enable_indiegala,
+            indiegala_entry_delay=self.settings.get("indiegala_entry_delay", 5),
+            indiegala_min_cost=self.settings.get("indiegala_min_cost", 0),
+            wins_tracker=self._wins_tracker,
             on_log=lambda msg: self.signals.log.emit(msg),
             on_entry=lambda giveaway, status: self.signals.entry.emit(
                 giveaway.name,
                 giveaway.image_url,
                 giveaway.cost,
                 status,
-                self._format_ends_text(giveaway.ends_label, giveaway.ends_at),
+                self._format_ends_text(
+                    giveaway.ends_label,
+                    giveaway.ends_at,
+                    giveaway.source,
+                ),
+                giveaway.source,
             ),
-            on_status=lambda points, page: self.signals.status.emit(points, page),
+            on_status=lambda points, page, source: self.signals.status.emit(
+                points, page, source
+            ),
             on_countdown=lambda label, seconds: self.signals.countdown.emit(
                 label, seconds
             ),
@@ -746,14 +1117,30 @@ class SteamgiftsWindow(QMainWindow):
                 giveaway.cost,
                 points,
                 minutes,
-                self._format_ends_text(giveaway.ends_label, giveaway.ends_at),
+                self._format_ends_text(
+                    giveaway.ends_label,
+                    giveaway.ends_at,
+                    giveaway.source,
+                ),
+                giveaway.source,
             ),
             on_manual_prompt=lambda giveaway: self.signals.manual_prompt.emit(
                 giveaway.code,
                 giveaway.name,
                 giveaway.image_url,
                 giveaway.cost,
-                self._format_ends_text(giveaway.ends_label, giveaway.ends_at),
+                self._format_ends_text(
+                    giveaway.ends_label,
+                    giveaway.ends_at,
+                    giveaway.source,
+                ),
+                giveaway.source,
+            ),
+            on_win=lambda win: self.signals.win.emit(
+                win.name,
+                win.image_url,
+                win.source,
+                win.url,
             ),
         )
         self.bot.start()
@@ -792,6 +1179,10 @@ class SteamgiftsWindow(QMainWindow):
         self.stop_btn.setEnabled(running)
         self.cookie_input.setEnabled(not running)
         self.save_cookie_btn.setEnabled(not running)
+        self.indiegala_cookie_input.setEnabled(not running)
+        self.save_indiegala_cookie_btn.setEnabled(not running)
+        self.test_indiegala_btn.setEnabled(not running)
+        self.enable_indiegala_checkbox.setEnabled(not running)
         self.tray_start_action.setEnabled(not running)
         self.tray_stop_action.setEnabled(running)
 
@@ -808,20 +1199,66 @@ class SteamgiftsWindow(QMainWindow):
         self.console_log.append(message)
 
     def _on_entry(
-        self, name: str, image_url: str, cost: int, status: str, ends_text: str
+        self,
+        name: str,
+        image_url: str,
+        cost: int,
+        status: str,
+        ends_text: str,
+        source: str,
     ) -> None:
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        cost_label = f"{cost} iS" if source == "indiegala" else f"{cost}P"
+        prefix = "[IndieGala] " if source == "indiegala" else ""
         self.console_log.append(
-            f"{timestamp} - Entering giveaway: {name} ({cost}P)"
+            f"{timestamp} - {prefix}Entering giveaway: {name} ({cost_label})"
         )
         if not self.settings.get("manual_select_giveaways"):
             self.activity_feed.add_card(
                 title=name,
-                subtitle=f"Entered · cost {cost}P",
+                subtitle=f"Entered · cost {cost_label}",
                 image_url=image_url,
                 status="entered",
                 ends_text=ends_text,
+                source=source,
             )
+
+    def _on_win(
+        self,
+        name: str,
+        image_url: str,
+        source: str,
+        url: str,
+    ) -> None:
+        platform = "IndieGala" if source == "indiegala" else "SteamGifts"
+        prefix = "[IndieGala] " if source == "indiegala" else "[SteamGifts] "
+        timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        self.console_log.append(
+            f"{timestamp} - {prefix}You won: {name} — claim on {platform}"
+        )
+
+        self._refresh_wins_tab()
+        self.activity_feed.add_card(
+            title=name,
+            subtitle=f"You won on {platform}! Claim your prize on the website.",
+            image_url=image_url,
+            status="won",
+            source=source,
+        )
+
+        if not self.settings.get("notify_on_win", True):
+            return
+
+        if self.tray.isVisible():
+            self.tray.showMessage(
+                "You won a giveaway!",
+                f"{name} ({platform})",
+                QSystemTrayIcon.MessageIcon.Information,
+                8000,
+            )
+
+        if url:
+            self._append_console(f"Win link: {url}")
 
     def _on_waiting_points(
         self,
@@ -831,25 +1268,43 @@ class SteamgiftsWindow(QMainWindow):
         current_points: int,
         wait_minutes: int,
         ends_text: str,
+        source: str,
     ) -> None:
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        if source == "indiegala":
+            cost_label = f"{cost} iS"
+            balance_label = f"{current_points} iS"
+            prefix = "[IndieGala] "
+            need_label = "balance"
+        else:
+            cost_label = f"{cost}P"
+            balance_label = f"{current_points}P"
+            prefix = ""
+            need_label = "points"
         self.console_log.append(
-            f"{timestamp} - Not enough Points for {name} ({cost}P). "
+            f"{timestamp} - {prefix}Not enough {need_label} for {name} ({cost_label}). "
             f"Waiting {wait_minutes} minutes…"
         )
         self.activity_feed.set_waiting_card(
             title=name,
             subtitle=(
-                f"Need {cost}P · have {current_points}P · "
-                f"waiting {wait_minutes} min for more points"
+                f"Need {cost_label} · have {balance_label} · "
+                f"waiting {wait_minutes} min"
             ),
             image_url=image_url,
             ends_text=ends_text,
+            source=source,
         )
 
-    def _update_status(self, points: int, page: int) -> None:
-        self.points_card.value_label.setText(str(points))
-        self.page_card.value_label.setText(str(page))
+    def _update_status(self, value: int, page: int, source: str) -> None:
+        if source == "indiegala":
+            self._indiegala_silver = value
+        else:
+            self._steamgifts_points = value
+            self.points_card.value_label.setText(str(value))
+            self.page_card.value_label.setText(str(page))
+
+        self._update_balance_header()
 
     def _on_countdown(self, label: str, seconds: int) -> None:
         if seconds <= 0 or not label:
@@ -870,14 +1325,22 @@ class SteamgiftsWindow(QMainWindow):
         self.countdown_label.show()
 
     def _on_manual_prompt(
-        self, code: str, name: str, image_url: str, cost: int, ends_text: str
+        self,
+        code: str,
+        name: str,
+        image_url: str,
+        cost: int,
+        ends_text: str,
+        source: str,
     ) -> None:
         self.tabs.setCurrentIndex(0)
+        cost_label = f"{cost} iS" if source == "indiegala" else f"{cost}P"
         card = self.activity_feed.add_manual_card(
             title=name,
-            subtitle=f"Enter this giveaway? Cost: {cost}P",
+            subtitle=f"Enter this giveaway? Cost: {cost_label}",
             image_url=image_url,
             ends_text=ends_text,
+            source=source,
         )
         card.decided.connect(
             lambda enter, giveaway_code=code: self._submit_manual_decision(enter)
