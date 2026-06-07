@@ -190,136 +190,225 @@ class SteamgiftsBot:
                 self.on_win(win)
 
     def _process_steamgifts_page(self) -> bool:
-        self.points, self.xsrf_token, giveaways = self.service.fetch_search_page(
-            self.current_page
-        )
+        while not self._stop_event.is_set():
+            self.points, self.xsrf_token, giveaways = (
+                self.service.fetch_search_page(self.current_page)
+            )
 
-        if self.on_status:
-            self.on_status(self.points, self.current_page, "steamgifts")
+            if self.on_status:
+                self.on_status(self.points, self.current_page, "steamgifts")
 
-        self.write_log(f"[SteamGifts] Processing page {self.current_page}")
+            self.write_log(f"[SteamGifts] Processing page {self.current_page}")
 
-        if not giveaways:
-            self.write_log(f"[SteamGifts] Page {self.current_page} is empty.")
-            return True
-
-        page_finished = True
-        for giveaway in giveaways:
-            if self._stop_event.is_set():
-                return False
-
-            if self.points - giveaway.cost < 0 and not giveaway.is_entered:
-                timer_info = self.service.fetch_points_timer()
-                self.points = timer_info.points
-                wait_seconds = timer_info.estimate_seconds_until_points(
-                    giveaway.cost
-                )
-                wait_minutes = max(1, math.ceil(wait_seconds / 60))
-
-                if self.on_waiting_points:
-                    self.on_waiting_points(giveaway, self.points, wait_minutes)
-
+            if not giveaways:
                 self.write_log(
-                    "[SteamGifts] Not enough points for the next giveaway. "
-                    f"Waiting {wait_minutes} minutes"
+                    f"[SteamGifts] Page {self.current_page} is empty."
                 )
+                return True
 
-                if self._wait_with_indiegala(wait_seconds, "points"):
+            page_finished = True
+            for giveaway in giveaways:
+                if self._stop_event.is_set():
                     return False
-                page_finished = False
-                break
 
-            if not giveaway.is_entered:
-                if self.manual_select:
-                    if not self._wait_manual_decision(giveaway):
+                if self.points - giveaway.cost < 0 and not giveaway.is_entered:
+                    timer_info = self.service.fetch_points_timer()
+                    self.points = timer_info.points
+                    wait_seconds = timer_info.estimate_seconds_until_points(
+                        giveaway.cost
+                    )
+                    now = int(time.time())
+
+                    if giveaway.ends_at and giveaway.ends_at <= now:
                         self.write_log(
-                            f"[SteamGifts] Skipped giveaway: {giveaway.name}"
+                            f"[SteamGifts] Skipped (ended): {giveaway.name}"
                         )
                         continue
 
-                if self._wait(self.entry_delay):
-                    return False
+                    if giveaway.ends_at:
+                        time_left = giveaway.ends_at - now
+                        if wait_seconds > time_left:
+                            wait_min = max(1, math.ceil(wait_seconds / 60))
+                            left_min = max(1, math.ceil(time_left / 60))
+                            self.write_log(
+                                "[SteamGifts] Skipped "
+                                f"{giveaway.name} — need ~{wait_min} min "
+                                f"for {giveaway.cost}P but only "
+                                f"{left_min} min left"
+                            )
+                            continue
 
-                self._enter_steamgifts_giveaway(giveaway)
+                    wait_minutes = max(1, math.ceil(wait_seconds / 60))
 
-        return page_finished
+                    if self.on_waiting_points:
+                        self.on_waiting_points(
+                            giveaway, self.points, wait_minutes
+                        )
+
+                    self.write_log(
+                        "[SteamGifts] Not enough points for the next giveaway. "
+                        f"Waiting {wait_minutes} minutes"
+                    )
+
+                    if self._wait_with_indiegala(wait_seconds, "points"):
+                        return False
+
+                    self.write_log(
+                        "[SteamGifts] Points wait finished — retrying page "
+                        f"{self.current_page}"
+                    )
+                    page_finished = False
+                    break
+
+                if not giveaway.is_entered:
+                    if self.manual_select:
+                        if not self._wait_manual_decision(giveaway):
+                            self.write_log(
+                                f"[SteamGifts] Skipped giveaway: {giveaway.name}"
+                            )
+                            continue
+
+                    if self._wait(self.entry_delay):
+                        return False
+
+                    self._enter_steamgifts_giveaway(giveaway)
+
+            if page_finished:
+                return True
+
+        return False
 
     def _process_indiegala_page(self, skip_silver_wait: bool = False) -> bool:
         assert self.indiegala is not None
+
+        while not self._stop_event.is_set():
+            try:
+                account = self.indiegala.fetch_account()
+                self.silver = account.silver
+            except Exception as error:
+                self.write_log(f"[IndieGala] Session check failed: {error}")
+                self.write_log(
+                    "[IndieGala] Re-save cookie (JSON export) and click Test Session."
+                )
+                return True
+
+            giveaways = self.indiegala.fetch_giveaways_page(self.indiegala_page)
+
+            if self.on_status:
+                self.on_status(self.silver, self.indiegala_page, "indiegala")
+
+            self.write_log(
+                f"[IndieGala] Processing page {self.indiegala_page} "
+                f"({self.silver} iS)"
+            )
+
+            if not giveaways:
+                self.write_log(
+                    f"[IndieGala] Page {self.indiegala_page} is empty."
+                )
+                return True
+
+            page_finished = True
+            for giveaway in giveaways:
+                if self._stop_event.is_set():
+                    return False
+
+                if (
+                    self.indiegala_min_cost > 0
+                    and giveaway.cost < self.indiegala_min_cost
+                ):
+                    continue
+
+                if self.silver < giveaway.cost:
+                    if skip_silver_wait:
+                        continue
+
+                    wait_minutes = self.refresh_delay_minutes
+                    if self.on_waiting_points:
+                        self.on_waiting_points(
+                            giveaway, self.silver, wait_minutes
+                        )
+
+                    self.write_log(
+                        "[IndieGala] Not enough Silver for the next giveaway. "
+                        f"Waiting {wait_minutes} minutes"
+                    )
+
+                    if self._wait_with_steamgifts(wait_minutes * 60, "points"):
+                        return False
+
+                    try:
+                        account = self.indiegala.fetch_account()
+                        self.silver = account.silver
+                    except Exception:
+                        pass
+
+                    self.write_log(
+                        "[IndieGala] Silver wait finished — retrying page "
+                        f"{self.indiegala_page}"
+                    )
+                    page_finished = False
+                    break
+
+                if self.manual_select:
+                    if not self._wait_manual_decision(giveaway):
+                        self.write_log(
+                            f"[IndieGala] Skipped giveaway: {giveaway.name}"
+                        )
+                        continue
+
+                if self._wait(self.indiegala_entry_delay):
+                    return False
+
+                if not self._enter_indiegala_giveaway(giveaway):
+                    continue
+
+            if page_finished:
+                return True
+
+        return False
+
+    def _run_indiegala_during_steamgifts_wait(
+        self,
+        max_joins: int = 5,
+        budget_seconds: int = 90,
+    ) -> None:
+        """Join a few IndieGala giveaways without blocking the points timer."""
+        if self.indiegala is None:
+            return
+
+        started = time.time()
+        joins = 0
 
         try:
             account = self.indiegala.fetch_account()
             self.silver = account.silver
         except Exception as error:
-            self.write_log(f"[IndieGala] Session check failed: {error}")
-            self.write_log(
-                "[IndieGala] Re-save cookie (JSON export) and click Test Session."
-            )
-            return True
+            self.write_log(f"[IndieGala] Background scan skipped: {error}")
+            return
 
         giveaways = self.indiegala.fetch_giveaways_page(self.indiegala_page)
-
-        if self.on_status:
-            self.on_status(self.silver, self.indiegala_page, "indiegala")
-
-        self.write_log(
-            f"[IndieGala] Processing page {self.indiegala_page} "
-            f"({self.silver} iS)"
-        )
-
-        if not giveaways:
-            self.write_log(f"[IndieGala] Page {self.indiegala_page} is empty.")
-            return True
-
-        page_finished = True
         for giveaway in giveaways:
-            if self._stop_event.is_set():
-                return False
-
+            if self._stop_event.is_set() or joins >= max_joins:
+                break
+            if time.time() - started >= budget_seconds:
+                break
             if (
                 self.indiegala_min_cost > 0
                 and giveaway.cost < self.indiegala_min_cost
             ):
                 continue
-
             if self.silver < giveaway.cost:
-                if skip_silver_wait:
-                    continue
-
-                wait_minutes = self.refresh_delay_minutes
-                if self.on_waiting_points:
-                    self.on_waiting_points(giveaway, self.silver, wait_minutes)
-
-                self.write_log(
-                    "[IndieGala] Not enough Silver for the next giveaway. "
-                    f"Waiting {wait_minutes} minutes"
-                )
-
-                if self._wait_with_steamgifts(wait_minutes * 60, "points"):
-                    return False
-
-                try:
-                    account = self.indiegala.fetch_account()
-                    self.silver = account.silver
-                except Exception:
-                    pass
-                page_finished = False
-                break
-
-            if self.manual_select:
-                if not self._wait_manual_decision(giveaway):
-                    self.write_log(
-                        f"[IndieGala] Skipped giveaway: {giveaway.name}"
-                    )
-                    continue
-
-            if self._wait(self.indiegala_entry_delay):
-                return False
-
-            if not self._enter_indiegala_giveaway(giveaway):
                 continue
+            if self._wait(self.indiegala_entry_delay):
+                return
+            if self._enter_indiegala_giveaway(giveaway):
+                joins += 1
 
-        return page_finished
+        if joins:
+            self.write_log(
+                f"[IndieGala] Background scan joined {joins} giveaway(s)"
+            )
 
     def _run_indiegala_cycle(self, skip_silver_wait: bool = False) -> None:
         if self.indiegala is None:
@@ -370,12 +459,12 @@ class SteamgiftsBot:
         end_time = time.time() + seconds
         last_remaining = -1
         last_indiegala_run = 0.0
-        scan_interval = max(30, self.indiegala_entry_delay * 3)
+        scan_interval = max(120, self.indiegala_entry_delay * 6)
 
         self.write_log(
-            "[IndieGala] Will keep scanning during SteamGifts points wait"
+            "[IndieGala] Light background scan during SteamGifts points wait"
         )
-        self._run_indiegala_cycle(skip_silver_wait=True)
+        self._run_indiegala_during_steamgifts_wait()
         last_indiegala_run = time.time()
 
         while time.time() < end_time:
@@ -385,7 +474,7 @@ class SteamgiftsBot:
 
             now = time.time()
             if now - last_indiegala_run >= scan_interval:
-                self._run_indiegala_cycle(skip_silver_wait=True)
+                self._run_indiegala_during_steamgifts_wait()
                 last_indiegala_run = now
 
             remaining = max(0, int(end_time - time.time()))
