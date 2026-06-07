@@ -39,16 +39,97 @@ QLabel#sectionTitle {
     letter-spacing: 1.2px;
 }
 
+QLabel {
+    background: transparent;
+}
+
 QLabel#contentHeader {
-    font-size: 15px;
+    font-size: 20px;
     font-weight: 700;
     color: #f5f5f5;
+}
+
+QLabel#contentSubheader {
+    color: #737373;
+    font-size: 12px;
+    margin-top: -4px;
+}
+
+QLabel#countdownLabel {
+    color: #d4b86a;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 8px;
+}
+
+QComboBox {
+    background: #111111;
+    border: 1px solid #333333;
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #f0f0f0;
+    min-width: 120px;
+}
+
+QComboBox:hover {
+    border-color: #4a4a4a;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+
+QComboBox QAbstractItemView {
+    background: #1a1a1a;
+    border: 1px solid #333333;
+    color: #f0f0f0;
+    selection-background-color: #333333;
+}
+
+QSpinBox {
+    background: #111111;
+    border: 1px solid #333333;
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: #f0f0f0;
+    min-width: 100px;
 }
 
 QFrame#panel {
     background: #1a1a1a;
     border: 1px solid #2a2a2a;
     border-radius: 12px;
+}
+
+QFrame#settingsSection {
+    background: #141414;
+    border: 1px solid #262626;
+    border-radius: 14px;
+}
+
+QFrame#settingRow {
+    background: transparent;
+    border: none;
+}
+
+QFrame#settingDivider {
+    background: #262626;
+    max-height: 1px;
+    min-height: 1px;
+    border: none;
+}
+
+QLabel#settingLabel {
+    color: #e5e5e5;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#settingHint {
+    color: #737373;
+    font-size: 11px;
+    line-height: 1.4;
 }
 
 QFrame#statCard {
@@ -178,11 +259,37 @@ QCheckBox::indicator:checked {
     border-color: #666666;
 }
 
-QTabWidget::pane {
+QTabWidget#mainTabs::pane {
     border: 1px solid #262626;
-    border-radius: 10px;
+    border-radius: 14px;
     background: #111111;
     top: -1px;
+    padding: 2px;
+}
+
+QTabWidget#mainTabs QTabBar::tab {
+    background: transparent;
+    color: #737373;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 12px 18px;
+    margin-right: 4px;
+    font-weight: 600;
+    font-size: 12px;
+    min-width: 72px;
+}
+
+QTabWidget#mainTabs QTabBar::tab:selected {
+    color: #f5f5f5;
+    border-bottom: 2px solid #86efac;
+    background: #161616;
+}
+
+QTabWidget#mainTabs QTabBar::tab:hover:!selected {
+    color: #d4d4d4;
+    background: #141414;
 }
 
 QTabBar::tab {

@@ -8,7 +8,11 @@ DEFAULTS = {
     "start_with_windows": False,
     "minimize_to_tray_on_close": True,
     "manual_select_giveaways": False,
+    "refresh_delay_minutes": 10,
+    "max_pages": 5,
 }
+
+REFRESH_MINUTE_OPTIONS = (5, 10, 15)
 
 
 def _settings_file() -> Path:
@@ -35,6 +39,11 @@ def load_settings() -> dict:
 
     settings = DEFAULTS.copy()
     settings.update({key: data[key] for key in DEFAULTS if key in data})
+
+    if settings["refresh_delay_minutes"] not in REFRESH_MINUTE_OPTIONS:
+        settings["refresh_delay_minutes"] = DEFAULTS["refresh_delay_minutes"]
+
+    settings["max_pages"] = max(1, min(int(settings["max_pages"]), 50))
     return settings
 
 
@@ -42,4 +51,9 @@ def save_settings(settings: dict) -> None:
     settings_file = _settings_file()
     settings_file.parent.mkdir(parents=True, exist_ok=True)
     payload = {key: settings.get(key, DEFAULTS[key]) for key in DEFAULTS}
+
+    if payload["refresh_delay_minutes"] not in REFRESH_MINUTE_OPTIONS:
+        payload["refresh_delay_minutes"] = DEFAULTS["refresh_delay_minutes"]
+
+    payload["max_pages"] = max(1, min(int(payload["max_pages"]), 50))
     settings_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")

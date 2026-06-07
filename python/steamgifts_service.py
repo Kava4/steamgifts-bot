@@ -52,6 +52,21 @@ class GiveawayInfo:
     cost: int
     image_url: str
     is_entered: bool
+    ends_at: Optional[int] = None
+    ends_label: str = ""
+
+
+@dataclass
+class EnteredGiveawayInfo:
+    name: str
+    code: str
+    cost: int
+    image_url: str
+    ends_at: int
+    remaining_label: str
+    entries_count: str
+    entered_label: str
+    xsrf_token: str
 
 
 def build_headers(cookie: str) -> dict[str, str]:
@@ -75,6 +90,61 @@ def extract_steam_app_id(element) -> Optional[str]:
     return match.group(1) if match else None
 
 
+def parse_giveaway_end(element) -> tuple[Optional[int], str]:
+    now = int(time.time())
+    best_ts: Optional[int] = None
+    best_label = ""
+
+    for time_el in element.select("[data-timestamp]"):
+        raw = time_el.get("data-timestamp", "")
+        if not raw.isdigit():
+            continue
+
+        timestamp = int(raw)
+        label = time_el.get_text(" ", strip=True)
+        if timestamp <= now:
+            continue
+
+        if best_ts is None or timestamp < best_ts:
+            best_ts = timestamp
+            best_label = label
+
+    if best_label:
+        return best_ts, best_label
+
+    for time_el in element.select("[data-timestamp]"):
+        label = time_el.get_text(" ", strip=True)
+        if "remaining" in label.lower() or "left" in label.lower():
+            raw = time_el.get("data-timestamp", "")
+            ts = int(raw) if raw.isdigit() else None
+            return ts, label
+
+    return None, ""
+
+
+def format_giveaway_ends(ends_at: Optional[int], ends_label: str) -> str:
+    if ends_label:
+        return ends_label
+
+    if not ends_at:
+        return ""
+
+    remaining = ends_at - int(time.time())
+    if remaining <= 0:
+        return "Ended"
+
+    days, rem = divmod(remaining, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+
+    if days:
+        return f"{days} day{'s' if days != 1 else ''} remaining"
+    if hours:
+        return f"{hours} hour{'s' if hours != 1 else ''} remaining"
+    minutes = max(1, minutes)
+    return f"{minutes} minute{'s' if minutes != 1 else ''} remaining"
+
+
 def parse_giveaway_row(element) -> GiveawayInfo:
     cost_el = element.select(".giveaway__heading__thin")
     game_cost = (
@@ -88,6 +158,7 @@ def parse_giveaway_row(element) -> GiveawayInfo:
 
     app_id = extract_steam_app_id(element)
     image_url = steam_image_url(app_id) if app_id else ""
+    ends_at, ends_label = parse_giveaway_end(element)
 
     return GiveawayInfo(
         name=game_name,
@@ -95,6 +166,8 @@ def parse_giveaway_row(element) -> GiveawayInfo:
         cost=game_cost,
         image_url=image_url,
         is_entered="is-faded" in element.get("class", []),
+        ends_at=ends_at,
+        ends_label=ends_label,
     )
 
 
@@ -138,6 +211,115 @@ def parse_points_timer(html: str) -> PointsTimerInfo:
         username=username,
         next_points_at=_find_next_points_timestamp(soup),
     )
+
+
+def parse_thumbnail_url(element) -> str:
+    thumb = element.select_one(".table_image_thumbnail")
+    if not thumb:
+        return ""
+
+    match = re.search(r"url\(([^)]+)\)", thumb.get("style", ""))
+    if not match:
+        return ""
+
+    return match.group(1).strip("\"'")
+
+
+def parse_cost_from_heading(heading_el) -> int:
+    for el in reversed(heading_el.select(".is-faded")):
+        text = el.get_text(strip=True)
+        if text.endswith("P") and "Copies" not in text:
+            return int(re.sub(r"[^0-9]", "", text) or "0")
+    return 0
+
+
+def parse_entered_row(element) -> Optional[EnteredGiveawayInfo]:
+    delete_form = element.select_one('form input[name="do"][value="entry_delete"]')
+    if delete_form is None:
+        return None
+
+    form = delete_form.find_parent("form")
+    if form is None:
+        return None
+
+    code_input = form.select_one('input[name="code"]')
+    xsrf_input = form.select_one('input[name="xsrf_token"]')
+    code = code_input.get("value", "") if code_input else ""
+    xsrf_token = xsrf_input.get("value", "") if xsrf_input else ""
+    if not code or not xsrf_token:
+        return None
+
+    heading_el = element.select_one(".table__column__heading")
+    if heading_el is None:
+        return None
+
+    cost = parse_cost_from_heading(heading_el)
+
+    href = heading_el.get("href", "")
+    for faded in heading_el.select(".is-faded"):
+        faded.decompose()
+
+    name = heading_el.get_text(strip=True)
+    if not name:
+        name = "Unknown"
+    if not code and href:
+        parts = href.strip("/").split("/")
+        if len(parts) >= 2 and parts[0] == "giveaway":
+            code = parts[1]
+
+    fill_col = element.select_one(".table__column--width-fill")
+    if fill_col is None:
+        return None
+
+    paragraphs = fill_col.find_all("p", recursive=False)
+    if len(paragraphs) < 2:
+        return None
+
+    time_p = paragraphs[1]
+    time_text = time_p.get_text(" ", strip=True)
+    if "remaining" not in time_text.lower():
+        return None
+
+    time_el = time_p.select_one("[data-timestamp]")
+    if time_el is None:
+        return None
+
+    raw_ts = time_el.get("data-timestamp", "")
+    if not raw_ts.isdigit():
+        return None
+
+    ends_at = int(raw_ts)
+    if ends_at <= int(time.time()):
+        return None
+
+    small_cols = element.select(".table__column--width-small.text-center")
+    entries_count = small_cols[0].get_text(strip=True) if len(small_cols) > 0 else ""
+    entered_label = small_cols[1].get_text(" ", strip=True) if len(small_cols) > 1 else ""
+
+    return EnteredGiveawayInfo(
+        name=name,
+        code=code,
+        cost=cost,
+        image_url=parse_thumbnail_url(element),
+        ends_at=ends_at,
+        remaining_label=time_text,
+        entries_count=entries_count,
+        entered_label=entered_label,
+        xsrf_token=xsrf_token,
+    )
+
+
+def parse_entered_page(html: str) -> list[EnteredGiveawayInfo]:
+    soup = BeautifulSoup(html, "html.parser")
+    giveaways: list[EnteredGiveawayInfo] = []
+
+    for row in soup.select(".table__row-inner-wrap"):
+        info = parse_entered_row(row)
+        if info is not None:
+            giveaways.append(info)
+
+    giveaways.sort(key=lambda item: item.ends_at)
+    return giveaways
 
 
 def parse_page(html: str) -> tuple[int, str, list[GiveawayInfo]]:
@@ -184,3 +366,19 @@ class SteamgiftsService:
         html = self._fetch(f"https://www.steamgifts.com/giveaways/search?page={page}")
         self.html = html
         return parse_page(html)
+
+    def fetch_entered_giveaways(self) -> list[EnteredGiveawayInfo]:
+        html = self._fetch("https://www.steamgifts.com/giveaways/entered")
+        return parse_entered_page(html)
+
+    def remove_entry(self, code: str, xsrf_token: str) -> None:
+        payload = f"xsrf_token={xsrf_token}&do=entry_delete&code={code}"
+        response = self.client.request(
+            "https://www.steamgifts.com/ajax.php",
+            method="POST",
+            headers=self.headers,
+            data=payload,
+        )
+
+        if response.status != 200:
+            raise RuntimeError(f"{response.status} - {response.status_text}")

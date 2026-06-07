@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from typing import Callable, Optional
 
-from steamgifts_service import GiveawayInfo, PointsTimerInfo, SteamgiftsService
+from steamgifts_service import GiveawayInfo, SteamgiftsService
 
 
 class SteamgiftsBot:
@@ -18,9 +18,11 @@ class SteamgiftsBot:
             Callable[[GiveawayInfo, int, int], None]
         ] = None,
         on_manual_prompt: Optional[Callable[[GiveawayInfo], None]] = None,
+        on_countdown: Optional[Callable[[str, int], None]] = None,
         manual_select: bool = False,
         entry_delay: int = 2,
-        refresh_delay: int = 600,
+        refresh_delay_minutes: int = 10,
+        max_pages: int = 5,
     ):
         self.cookie = cookie.strip()
         self.on_log = on_log
@@ -28,9 +30,12 @@ class SteamgiftsBot:
         self.on_entry = on_entry
         self.on_waiting_points = on_waiting_points
         self.on_manual_prompt = on_manual_prompt
+        self.on_countdown = on_countdown
         self.manual_select = manual_select
         self.entry_delay = entry_delay
-        self.refresh_delay = refresh_delay
+        self.refresh_delay_minutes = refresh_delay_minutes
+        self.max_pages = max(1, max_pages)
+        self.refresh_delay = refresh_delay_minutes * 60
 
         self.service = SteamgiftsService(self.cookie)
         self.current_page = 1
@@ -48,6 +53,13 @@ class SteamgiftsBot:
     def set_manual_select(self, enabled: bool) -> None:
         self.manual_select = enabled
 
+    def apply_bot_settings(
+        self, refresh_delay_minutes: int, max_pages: int
+    ) -> None:
+        self.refresh_delay_minutes = refresh_delay_minutes
+        self.refresh_delay = refresh_delay_minutes * 60
+        self.max_pages = max(1, max_pages)
+
     def submit_manual_decision(self, enter: bool) -> None:
         self._manual_decision = enter
         self._manual_event.set()
@@ -59,6 +71,7 @@ class SteamgiftsBot:
         if not self.cookie:
             raise ValueError("PHPSESSID cookie is required.")
 
+        self.current_page = 1
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
@@ -66,6 +79,7 @@ class SteamgiftsBot:
     def stop(self) -> None:
         self._stop_event.set()
         self._manual_event.set()
+        self._clear_countdown()
         self.write_log("Stopping bot...")
 
     def _run(self) -> None:
@@ -74,6 +88,8 @@ class SteamgiftsBot:
         except Exception as error:
             if not self._stop_event.is_set():
                 self.write_log(f"Fatal error: {error}")
+        finally:
+            self._clear_countdown()
 
     def _process_games(self) -> None:
         while not self._stop_event.is_set():
@@ -86,6 +102,22 @@ class SteamgiftsBot:
 
             self.write_log(f"Processing games from Page {self.current_page}")
 
+            if not giveaways:
+                self.write_log(f"Page {self.current_page} is empty.")
+                if self.current_page < self.max_pages:
+                    self.current_page += 1
+                    continue
+
+                self.current_page = 1
+                self.write_log(
+                    "No more pages. Waiting "
+                    f"{self.refresh_delay_minutes} minutes to update"
+                )
+                if self._wait(self.refresh_delay, "refresh"):
+                    return
+                continue
+
+            page_finished = True
             for giveaway in giveaways:
                 if self._stop_event.is_set():
                     return
@@ -106,8 +138,9 @@ class SteamgiftsBot:
                         f"Waiting {wait_minutes} minutes to get more Points"
                     )
 
-                    if self._wait(wait_seconds):
+                    if self._wait(wait_seconds, "points"):
                         return
+                    page_finished = False
                     break
 
                 if not giveaway.is_entered:
@@ -124,10 +157,20 @@ class SteamgiftsBot:
             if self._stop_event.is_set():
                 return
 
+            if not page_finished:
+                continue
+
+            if self.current_page < self.max_pages:
+                self.current_page += 1
+                self.write_log(f"Moving to page {self.current_page}")
+                continue
+
+            self.current_page = 1
             self.write_log(
-                f"List of games ended. Waiting {self.refresh_delay // 60} minutes to update"
+                f"List of games ended. Waiting {self.refresh_delay_minutes} "
+                "minutes to update"
             )
-            if self._wait(self.refresh_delay):
+            if self._wait(self.refresh_delay, "refresh"):
                 return
 
     def _wait_manual_decision(self, giveaway: GiveawayInfo) -> bool:
@@ -167,12 +210,27 @@ class SteamgiftsBot:
         else:
             self.write_log(f"Entering giveaway: {giveaway.name}")
 
-    def _wait(self, seconds: int) -> bool:
+    def _clear_countdown(self) -> None:
+        if self.on_countdown:
+            self.on_countdown("", 0)
+
+    def _wait(self, seconds: int, label: str = "") -> bool:
         end_time = time.time() + seconds
+        last_remaining = -1
+
         while time.time() < end_time:
             if self._stop_event.is_set():
+                self._clear_countdown()
                 return True
-            time.sleep(0.5)
+
+            remaining = max(0, int(end_time - time.time()))
+            if remaining != last_remaining and self.on_countdown:
+                self.on_countdown(label, remaining)
+                last_remaining = remaining
+
+            time.sleep(0.25)
+
+        self._clear_countdown()
         return False
 
     def write_log(self, text: str) -> None:

@@ -21,6 +21,7 @@ class ActivityCard(QFrame):
         image_url: str = "",
         status: str = "info",
         network: QNetworkAccessManager | None = None,
+        ends_text: str = "",
     ):
         super().__init__()
         self.setObjectName("activityCard")
@@ -59,6 +60,11 @@ class ActivityCard(QFrame):
                 color: #9ca3af;
                 font-size: 12px;
             }}
+            QLabel#endsLabel {{
+                color: {accent};
+                font-size: 11px;
+                font-weight: 600;
+            }}
             QLabel#badge {{
                 background: {border};
                 color: {accent};
@@ -70,7 +76,7 @@ class ActivityCard(QFrame):
             """
         )
 
-        self.setFixedHeight(96)
+        self.setFixedHeight(112 if ends_text else 96)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
@@ -108,14 +114,32 @@ class ActivityCard(QFrame):
         self.subtitle_label.setObjectName("subtitle")
         self.subtitle_label.setWordWrap(True)
         text_col.addWidget(self.subtitle_label)
+
+        self.ends_label = QLabel(ends_text)
+        self.ends_label.setObjectName("endsLabel")
+        self.ends_label.setWordWrap(True)
+        if ends_text:
+            text_col.addWidget(self.ends_label)
+        else:
+            self.ends_label.hide()
+
         layout.addLayout(text_col, stretch=1)
 
         if image_url and network is not None:
             self._load_image(image_url)
 
-    def update_content(self, title: str, subtitle: str) -> None:
+    def update_content(
+        self, title: str, subtitle: str, ends_text: str = ""
+    ) -> None:
         self.title_label.setText(title)
         self.subtitle_label.setText(subtitle)
+        if ends_text:
+            self.ends_label.setText(ends_text)
+            self.ends_label.show()
+            self.setFixedHeight(112)
+        else:
+            self.ends_label.hide()
+            self.setFixedHeight(96)
 
     def _load_image(self, image_url: str) -> None:
         request = QNetworkRequest(QUrl(image_url))
@@ -146,6 +170,7 @@ class ManualSelectCard(ActivityCard):
         subtitle: str,
         image_url: str,
         network: QNetworkAccessManager,
+        ends_text: str = "",
     ):
         super().__init__(
             title=title,
@@ -153,8 +178,9 @@ class ManualSelectCard(ActivityCard):
             image_url=image_url,
             status="prompt",
             network=network,
+            ends_text=ends_text,
         )
-        self.setFixedHeight(132)
+        self.setFixedHeight(148 if ends_text else 132)
 
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
@@ -232,10 +258,11 @@ class ActivityFeed(QFrame):
         title: str,
         subtitle: str,
         image_url: str = "",
+        ends_text: str = "",
     ) -> None:
         self._empty.hide()
         if self._waiting_card is not None:
-            self._waiting_card.update_content(title, subtitle)
+            self._waiting_card.update_content(title, subtitle, ends_text)
         else:
             self._waiting_card = ActivityCard(
                 title=title,
@@ -243,6 +270,7 @@ class ActivityFeed(QFrame):
                 image_url=image_url,
                 status="waiting",
                 network=self._network,
+                ends_text=ends_text,
             )
             self._insert_card(self._waiting_card)
         self._scroll.verticalScrollBar().setValue(0)
@@ -262,6 +290,7 @@ class ActivityFeed(QFrame):
         subtitle: str,
         image_url: str = "",
         status: str = "info",
+        ends_text: str = "",
     ) -> None:
         card = ActivityCard(
             title=title,
@@ -269,6 +298,7 @@ class ActivityFeed(QFrame):
             image_url=image_url,
             status=status,
             network=self._network,
+            ends_text=ends_text,
         )
         self._empty.hide()
         self.clear_waiting_card()
@@ -282,12 +312,14 @@ class ActivityFeed(QFrame):
         title: str,
         subtitle: str,
         image_url: str,
+        ends_text: str = "",
     ) -> ManualSelectCard:
         card = ManualSelectCard(
             title=title,
             subtitle=subtitle,
             image_url=image_url,
             network=self._network,
+            ends_text=ends_text,
         )
         self._empty.hide()
         self.clear_waiting_card()
@@ -306,3 +338,232 @@ class ActivityFeed(QFrame):
                 widget.deleteLater()
         self._empty.show()
         self.cleared.emit()
+
+
+class EnteredGiveawayCard(QFrame):
+    remove_requested = pyqtSignal(str, str)
+
+    def __init__(
+        self,
+        name: str,
+        code: str,
+        cost: int,
+        image_url: str,
+        remaining_label: str,
+        entries_count: str,
+        entered_label: str,
+        xsrf_token: str,
+        network: QNetworkAccessManager,
+    ):
+        super().__init__()
+        self.code = code
+        self.xsrf_token = xsrf_token
+        self.setObjectName("activityCard")
+
+        accent = "#7ec8e3"
+        self.setStyleSheet(
+            f"""
+            QFrame#activityCard {{
+                background: #1a2228;
+                border: 1px solid #2d4a5c;
+                border-radius: 14px;
+                margin: 2px 0;
+            }}
+            QLabel#title {{
+                color: #f0f0f0;
+                font-size: 14px;
+                font-weight: 700;
+            }}
+            QLabel#subtitle {{
+                color: #9ca3af;
+                font-size: 12px;
+            }}
+            QLabel#remainingLabel {{
+                color: {accent};
+                font-size: 13px;
+                font-weight: 700;
+            }}
+            """
+        )
+
+        self.setFixedHeight(112)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(14)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self.image_label = QLabel()
+        self.image_label.setFixedSize(184, 69)
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setStyleSheet(
+            "background: #141414; border: 1px solid #333333; border-radius: 8px; color: #6b6b6b;"
+        )
+        self.image_label.setText("…")
+        layout.addWidget(self.image_label)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(6)
+
+        self.title_label = QLabel(name)
+        self.title_label.setObjectName("title")
+        self.title_label.setWordWrap(True)
+        text_col.addWidget(self.title_label)
+
+        meta_parts = [f"{cost}P"]
+        if entries_count:
+            meta_parts.append(f"{entries_count} entries")
+        if entered_label:
+            meta_parts.append(f"entered {entered_label}")
+        self.subtitle_label = QLabel(" · ".join(meta_parts))
+        self.subtitle_label.setObjectName("subtitle")
+        self.subtitle_label.setWordWrap(True)
+        text_col.addWidget(self.subtitle_label)
+
+        self.remaining_label = QLabel(remaining_label)
+        self.remaining_label.setObjectName("remainingLabel")
+        self.remaining_label.setWordWrap(True)
+        text_col.addWidget(self.remaining_label)
+
+        layout.addLayout(text_col, stretch=1)
+
+        self.remove_btn = QPushButton("Remove")
+        self.remove_btn.setObjectName("dangerBtn")
+        self.remove_btn.setFixedWidth(88)
+        self.remove_btn.clicked.connect(self._on_remove)
+        layout.addWidget(self.remove_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+        if image_url:
+            request = QNetworkRequest(QUrl(image_url))
+            reply = network.get(request)
+            reply.finished.connect(lambda: self._on_image_loaded(reply))
+
+    def _on_remove(self) -> None:
+        self.remove_btn.setEnabled(False)
+        self.remove_btn.setText("…")
+        self.remove_requested.emit(self.code, self.xsrf_token)
+
+    def _on_image_loaded(self, reply) -> None:
+        if reply.error().value == 0:
+            pixmap = QPixmap()
+            if pixmap.loadFromData(reply.readAll()):
+                self.image_label.setPixmap(
+                    pixmap.scaled(
+                        self.image_label.size(),
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
+                self.image_label.setText("")
+        reply.deleteLater()
+
+
+class EnteredFeed(QFrame):
+    refresh_requested = pyqtSignal()
+    remove_requested = pyqtSignal(str, str)
+
+    def __init__(self, network: QNetworkAccessManager):
+        super().__init__()
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(10)
+
+        header = QHBoxLayout()
+        self.summary_label = QLabel("Active entered giveaways")
+        self.summary_label.setObjectName("hint")
+        header.addWidget(self.summary_label)
+        header.addStretch()
+
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setObjectName("accentBtn")
+        self.refresh_btn.clicked.connect(self.refresh_requested.emit)
+        header.addWidget(self.refresh_btn)
+        outer.addLayout(header)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+        )
+
+        self._container = QWidget()
+        self._container.setStyleSheet("background: transparent;")
+        self._layout = QVBoxLayout(self._container)
+        self._layout.setContentsMargins(4, 4, 4, 4)
+        self._layout.setSpacing(10)
+        self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        self._empty = QLabel(
+            "No active entered giveaways\n\n"
+            "Click Refresh to load open entries from steamgifts.com."
+        )
+        self._empty.setObjectName("emptyState")
+        self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty.setWordWrap(True)
+        self._layout.addWidget(self._empty)
+        self._layout.addStretch(1)
+
+        self._scroll.setWidget(self._container)
+        outer.addWidget(self._scroll, stretch=1)
+
+        self._network = network
+        self._cards: dict[str, EnteredGiveawayCard] = {}
+
+    def set_loading(self, loading: bool) -> None:
+        self.refresh_btn.setEnabled(not loading)
+        self.refresh_btn.setText("Refreshing…" if loading else "Refresh")
+
+    def set_giveaways(self, giveaways: list) -> None:
+        for card in self._cards.values():
+            self._layout.removeWidget(card)
+            card.deleteLater()
+        self._cards.clear()
+
+        if not giveaways:
+            self._empty.show()
+            self.summary_label.setText("Active entered giveaways · 0 open")
+            return
+
+        self._empty.hide()
+        self.summary_label.setText(
+            f"Active entered giveaways · {len(giveaways)} open"
+        )
+
+        for info in giveaways:
+            card = EnteredGiveawayCard(
+                name=info.name,
+                code=info.code,
+                cost=info.cost,
+                image_url=info.image_url,
+                remaining_label=info.remaining_label,
+                entries_count=info.entries_count,
+                entered_label=info.entered_label,
+                xsrf_token=info.xsrf_token,
+                network=self._network,
+            )
+            card.remove_requested.connect(self.remove_requested.emit)
+            self._cards[info.code] = card
+            self._layout.insertWidget(self._layout.count() - 1, card)
+
+    def remove_card(self, code: str) -> None:
+        card = self._cards.pop(code, None)
+        if card is None:
+            return
+
+        self._layout.removeWidget(card)
+        card.deleteLater()
+
+        count = len(self._cards)
+        self.summary_label.setText(
+            f"Active entered giveaways · {count} open"
+        )
+        if count == 0:
+            self._empty.show()

@@ -8,6 +8,7 @@ Based on [stilManiac/steamgifts-bot](https://github.com/stilManiac/steamgifts-bo
 
 - Automatic giveaway entry
 - Activity feed with Steam game images
+- **Entered** tab — active joined giveaways with time remaining and Remove
 - Manual select (Yes/No per giveaway)
 - Smart wait when points are insufficient
 - System tray — bot keeps running in the background
@@ -38,7 +39,11 @@ The cookie is saved to `%APPDATA%\SteamGiftsBot\cookie.txt`.
 1. **Fetch Points** — verify session and check points
 2. **Start Bot** — begin automatic entry
 3. **Activity** — entered giveaways, waiting states, manual prompts
-4. **Console** — full event log
+4. **Entered** — open giveaways you joined; refresh list and remove entries
+5. **Console** — full event log
+6. **Settings** — refresh interval (5/10/15 min), max pages to scan
+
+While the bot waits, a **countdown** appears under the status pill (list refresh or points timer).
 
 ### System tray
 
