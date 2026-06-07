@@ -15,6 +15,7 @@ DEFAULTS = {
     "indiegala_entry_delay": 5,
     "indiegala_min_cost": 0,
     "notify_on_win": True,
+    "check_for_updates_on_startup": True,
 }
 
 REFRESH_MINUTE_OPTIONS = (5, 10, 15)

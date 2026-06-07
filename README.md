@@ -15,10 +15,11 @@ Based on [stilManiac/steamgifts-bot](https://github.com/stilManiac/steamgifts-bo
 - Smart wait when points are insufficient
 - System tray — bot keeps running in the background
 - Start with Windows (optional)
+- **Auto-update** — checks GitHub Releases on startup and installs new builds
 
 ## Download
 
-Download `SteamGiftsBot.exe` from [Releases](https://github.com/AimSyncCore/SteamGifts-bot/releases).
+Download `SteamGiftsBot.exe` from [Releases](https://github.com/AimSyncCore/SteamGifts-bot/releases) (current: **v1.0.0**).
 
 ## Quick start
 
@@ -55,9 +56,13 @@ Cookie file: `%APPDATA%\SteamGiftsBot\indiegala_cookie.txt`
 4. **Entered** — open giveaways you joined; refresh list and remove entries
 5. **Wins** — giveaways you won (with notifications when something new appears)
 6. **Console** — full event log
-7. **Settings** — refresh interval (5/10/15 min), max pages to scan
+7. **Settings** — refresh interval (5/10/15 min), max pages to scan, max giveaway end window, updates
 
 While the bot waits, a **countdown** appears under the status pill (list refresh or points timer).
+
+### Updates
+
+The packaged app checks [GitHub Releases](https://github.com/AimSyncCore/SteamGifts-bot/releases) for a newer `SteamGiftsBot.exe`. When an update is found, it downloads the file and restarts to replace the running exe. You can also use **Settings → Check for updates**.
 
 ### System tray
 
@@ -105,6 +110,8 @@ python/
   http_client.py       # curl HTTP (bypasses Cloudflare)
   settings.py
   paths.py
+  version.py
+  updater.py
   windows_startup.py
   theme.py
 assets/

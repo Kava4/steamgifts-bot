@@ -32,6 +32,8 @@ pyinstaller --noconfirm --clean `
     --hidden-import steamgifts_service `
     --hidden-import indiegala_service `
     --hidden-import wins_tracker `
+    --hidden-import version `
+    --hidden-import updater `
     --hidden-import http_client `
     --hidden-import windows_startup `
     "$Root\python\main.py"

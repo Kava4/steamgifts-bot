@@ -2,7 +2,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QCloseEvent, QFont, QIcon
 from PyQt6.QtNetwork import QNetworkAccessManager
 from PyQt6.QtWidgets import (
@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 
 from bot import SteamgiftsBot
 from indiegala_service import IndieGalaService, format_indiegala_cookie_storage
-from paths import get_cookie_file, get_icon_path, get_indiegala_cookie_file
+from paths import get_cookie_file, get_data_dir, get_icon_path, get_indiegala_cookie_file
 from settings import REFRESH_MINUTE_OPTIONS, load_settings, save_settings
 from steamgifts_service import (
     EnteredGiveawayInfo,
@@ -38,6 +38,8 @@ from steamgifts_service import (
     format_giveaway_ends,
 )
 from theme import APP_STYLESHEET
+from updater import UpdateInfo, apply_update, download_update, fetch_latest_update, is_packaged_app
+from version import APP_VERSION
 from widgets import ActivityFeed, EnteredFeed, WinsFeed
 from wins_tracker import WinsTracker
 
@@ -121,6 +123,34 @@ class RemoveEntryWorker(QThread):
             self.failed.emit(self.code, str(error))
 
 
+class UpdateCheckWorker(QThread):
+    finished = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def run(self) -> None:
+        try:
+            self.finished.emit(fetch_latest_update())
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
+class DownloadUpdateWorker(QThread):
+    finished = pyqtSignal(str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, download_url: str):
+        super().__init__()
+        self.download_url = download_url
+
+    def run(self) -> None:
+        try:
+            dest = get_data_dir() / "SteamGiftsBot.update.exe"
+            download_update(self.download_url, dest)
+            self.finished.emit(str(dest))
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
 class BotSignals(QObject):
     log = pyqtSignal(str)
     entry = pyqtSignal(str, str, int, str, str, str)
@@ -143,6 +173,9 @@ class SteamgiftsWindow(QMainWindow):
         self._entered_worker: FetchEnteredWorker | None = None
         self._indiegala_worker: FetchIndieGalaWorker | None = None
         self._remove_worker: RemoveEntryWorker | None = None
+        self._update_check_worker: UpdateCheckWorker | None = None
+        self._download_update_worker: DownloadUpdateWorker | None = None
+        self._pending_update: UpdateInfo | None = None
         self._entered_tab_index = -1
         self._wins_tab_index = -1
         self._force_quit = False
@@ -167,9 +200,10 @@ class SteamgiftsWindow(QMainWindow):
         self._load_cookie()
         self._apply_settings_to_ui()
         self._show_welcome_if_needed()
+        self._schedule_startup_update_check()
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("SteamGifts Bot")
+        self.setWindowTitle(f"SteamGifts Bot v{APP_VERSION}")
         if not self._app_icon.isNull():
             self.setWindowIcon(self._app_icon)
         self.setMinimumSize(1100, 720)
@@ -547,6 +581,49 @@ class SteamgiftsWindow(QMainWindow):
             )
         )
 
+        bot_settings_layout.addSpacing(14)
+
+        updates_panel = QFrame()
+        updates_panel.setObjectName("panel")
+        updates_layout = QVBoxLayout(updates_panel)
+        updates_layout.setContentsMargins(14, 12, 14, 12)
+        updates_layout.setSpacing(10)
+
+        updates_title = QLabel("Updates")
+        updates_title.setObjectName("settingLabel")
+        updates_layout.addWidget(updates_title)
+
+        updates_hint = QLabel(
+            "Download new builds from GitHub Releases and restart to install."
+        )
+        updates_hint.setObjectName("settingHint")
+        updates_hint.setWordWrap(True)
+        updates_layout.addWidget(updates_hint)
+
+        self.version_label = QLabel(f"Version {APP_VERSION}")
+        self.version_label.setObjectName("settingHint")
+        updates_layout.addWidget(self.version_label)
+
+        self.check_updates_btn = QPushButton("Check for updates")
+        self.check_updates_btn.setObjectName("sidebarBtn")
+        self.check_updates_btn.clicked.connect(
+            lambda: self._check_for_updates(manual=True)
+        )
+        updates_layout.addWidget(self.check_updates_btn)
+
+        self.check_updates_on_startup_checkbox = QCheckBox(
+            "Check for updates on startup"
+        )
+        self.check_updates_on_startup_checkbox.setToolTip(
+            "Looks for a newer SteamGiftsBot.exe on GitHub when the app starts."
+        )
+        self.check_updates_on_startup_checkbox.toggled.connect(
+            self._on_check_updates_on_startup_toggled
+        )
+        updates_layout.addWidget(self.check_updates_on_startup_checkbox)
+
+        bot_settings_layout.addWidget(updates_panel)
+
         divider3 = QFrame()
         divider3.setObjectName("settingDivider")
         divider3.setFixedHeight(1)
@@ -708,6 +785,10 @@ class SteamgiftsWindow(QMainWindow):
             self.settings.get("notify_on_win", True)
         )
 
+        self.check_updates_on_startup_checkbox.setChecked(
+            self.settings.get("check_for_updates_on_startup", True)
+        )
+
         if WINDOWS_STARTUP_AVAILABLE:
             actual_startup = windows_startup.is_startup_enabled()
             self.settings["start_with_windows"] = actual_startup
@@ -722,6 +803,129 @@ class SteamgiftsWindow(QMainWindow):
     def _on_notify_on_win_toggled(self, checked: bool) -> None:
         self.settings["notify_on_win"] = checked
         self._persist_settings()
+
+    def _on_check_updates_on_startup_toggled(self, checked: bool) -> None:
+        self.settings["check_for_updates_on_startup"] = checked
+        self._persist_settings()
+
+    def _schedule_startup_update_check(self) -> None:
+        if not self.settings.get("check_for_updates_on_startup", True):
+            return
+        if not is_packaged_app():
+            return
+
+        QTimer.singleShot(2500, lambda: self._check_for_updates(manual=False))
+
+    def _check_for_updates(self, manual: bool = False) -> None:
+        if self._update_check_worker and self._update_check_worker.isRunning():
+            return
+
+        if manual and not is_packaged_app():
+            QMessageBox.information(
+                self,
+                "Updates",
+                "Auto-update is available in the packaged SteamGiftsBot.exe build.",
+            )
+            return
+
+        if manual:
+            self.check_updates_btn.setEnabled(False)
+            self.check_updates_btn.setText("Checking...")
+
+        self._update_check_worker = UpdateCheckWorker()
+        self._update_check_worker.finished.connect(
+            lambda info: self._on_update_check_finished(info, manual)
+        )
+        self._update_check_worker.failed.connect(
+            lambda message: self._on_update_check_failed(message, manual)
+        )
+        self._update_check_worker.start()
+
+    def _reset_update_check_button(self) -> None:
+        self.check_updates_btn.setEnabled(True)
+        self.check_updates_btn.setText("Check for updates")
+
+    def _on_update_check_finished(
+        self, info: UpdateInfo | None, manual: bool
+    ) -> None:
+        self._reset_update_check_button()
+
+        if info is None:
+            if manual:
+                QMessageBox.information(
+                    self,
+                    "Updates",
+                    f"You are on the latest version (v{APP_VERSION}).",
+                )
+            return
+
+        self._offer_update_install(info)
+
+    def _on_update_check_failed(self, message: str, manual: bool) -> None:
+        self._reset_update_check_button()
+        self._append_console(f"[Update] Check failed: {message}")
+        if manual:
+            QMessageBox.warning(
+                self,
+                "Updates",
+                f"Could not check for updates:\n{message}",
+            )
+
+    def _offer_update_install(self, info: UpdateInfo) -> None:
+        notes = info.release_notes.strip()
+        if len(notes) > 500:
+            notes = notes[:497] + "..."
+
+        details = f"Version v{info.version} is available."
+        if notes:
+            details += f"\n\n{notes}"
+
+        reply = QMessageBox.question(
+            self,
+            "Update available",
+            f"{details}\n\nDownload and restart now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._install_update(info)
+
+    def _install_update(self, info: UpdateInfo) -> None:
+        if self._download_update_worker and self._download_update_worker.isRunning():
+            return
+
+        if self.bot and self.bot.is_running:
+            self.bot.stop()
+
+        self._pending_update = info
+        self.check_updates_btn.setEnabled(False)
+        self.check_updates_btn.setText("Downloading...")
+        self._append_console(f"[Update] Downloading v{info.version}...")
+
+        self._download_update_worker = DownloadUpdateWorker(info.download_url)
+        self._download_update_worker.finished.connect(
+            self._on_update_download_finished
+        )
+        self._download_update_worker.failed.connect(
+            self._on_update_download_failed
+        )
+        self._download_update_worker.start()
+
+    def _on_update_download_finished(self, downloaded_path: str) -> None:
+        self._reset_update_check_button()
+        self._append_console("[Update] Download complete. Restarting to install...")
+        apply_update(Path(downloaded_path))
+
+    def _on_update_download_failed(self, message: str) -> None:
+        self._reset_update_check_button()
+        self._append_console(f"[Update] Download failed: {message}")
+        QMessageBox.warning(
+            self,
+            "Updates",
+            f"Could not download the update:\n{message}",
+        )
 
     def _update_balance_header(self) -> None:
         if not self.settings.get("enable_indiegala_beta", False):

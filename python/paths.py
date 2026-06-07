@@ -41,3 +41,9 @@ def get_icon_path() -> Path:
         if bundled.exists():
             return bundled
     return Path(__file__).resolve().parent.parent / "assets" / "icon.ico"
+
+
+def get_executable_path() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve()
+    raise RuntimeError("Not running as packaged executable")
