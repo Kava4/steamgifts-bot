@@ -337,8 +337,21 @@ def parse_won_notification_count(html: str) -> Optional[int]:
     return None
 
 
+def is_won_row_received(element) -> bool:
+    for col in element.select(".table__column--width-small"):
+        text = col.get_text(" ", strip=True)
+        if "Not Received" in text:
+            return False
+        if text == "Received":
+            return True
+    return False
+
+
 def parse_won_row(element) -> Optional[WonGiveawayInfo]:
     if element.select_one('form input[name="do"][value="entry_delete"]'):
+        return None
+
+    if is_won_row_received(element):
         return None
 
     heading_el = element.select_one(".table__column__heading")

@@ -977,7 +977,7 @@ class SteamgiftsWindow(QMainWindow):
             ),
             self._wins_tab_index: (
                 "Wins",
-                "Giveaways you won on SteamGifts or IndieGala",
+                "Unclaimed giveaways waiting to be received",
             ),
             self._console_tab_index: (
                 "Console",

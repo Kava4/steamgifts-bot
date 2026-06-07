@@ -589,7 +589,7 @@ class WinsFeed(QFrame):
         super().__init__()
 
         header = QHBoxLayout()
-        self.summary_label = QLabel("Giveaways you won · 0 total")
+        self.summary_label = QLabel("Unclaimed wins · 0")
         self.summary_label.setObjectName("settingHint")
         header.addWidget(self.summary_label)
         header.addStretch()
@@ -613,9 +613,9 @@ class WinsFeed(QFrame):
         self._layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self._empty = QLabel(
-            "No wins tracked yet\n\n"
-            "When you win on SteamGifts or IndieGala, the bot will "
-            "alert you here and in the system tray."
+            "No unclaimed wins\n\n"
+            "Only giveaways you still need to receive appear here. "
+            "Already received prizes are hidden."
         )
         self._empty.setObjectName("emptyState")
         self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -636,12 +636,12 @@ class WinsFeed(QFrame):
 
         if not wins:
             self._empty.show()
-            self.summary_label.setText("Giveaways you won · 0 total")
+            self.summary_label.setText("Unclaimed wins · 0")
             return
 
         self._empty.hide()
         self.summary_label.setText(
-            f"Giveaways you won · {len(wins)} total"
+            f"Unclaimed wins · {len(wins)}"
         )
 
         for win in wins:
@@ -649,7 +649,7 @@ class WinsFeed(QFrame):
             platform = "IndieGala" if source == "indiegala" else "SteamGifts"
             card = ActivityCard(
                 title=win.name,
-                subtitle=f"Won on {platform} · claim on the website",
+                subtitle=f"Not received yet · claim on {platform}",
                 image_url=getattr(win, "image_url", ""),
                 status="won",
                 network=self._network,

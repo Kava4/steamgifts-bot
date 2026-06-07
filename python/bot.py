@@ -172,28 +172,22 @@ class SteamgiftsBot:
 
         self._last_win_check = now
         wins = self._collect_wins()
+        is_first = baseline or not self._wins_tracker.baseline_done
+        new_wins = self._wins_tracker.sync_wins(wins)
 
-        if baseline or not self._wins_tracker.baseline_done:
+        if is_first:
             if wins:
                 self.write_log(
-                    f"Tracking {len(wins)} existing win(s) — "
+                    f"Tracking {len(wins)} unclaimed win(s) — "
                     "new wins will trigger alerts"
                 )
-            self._wins_tracker.register_baseline(wins)
-            return
-
-        new_wins = self._wins_tracker.find_new(wins)
-        if not new_wins:
             return
 
         for win in new_wins:
-            self._wins_tracker.mark_seen(win)
             prefix = "[IndieGala] " if win.source == "indiegala" else "[SteamGifts] "
             self.write_log(f"{prefix}You won: {win.name}")
             if self.on_win:
                 self.on_win(win)
-
-        self._wins_tracker.save()
 
     def _process_steamgifts_page(self) -> bool:
         self.points, self.xsrf_token, giveaways = self.service.fetch_search_page(

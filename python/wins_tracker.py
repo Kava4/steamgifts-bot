@@ -98,35 +98,41 @@ class WinsTracker:
         wins.sort(key=lambda item: item.detected_at or "", reverse=True)
         return wins
 
-    def register_baseline(self, wins: list[WonGiveawayInfo]) -> None:
-        for info in wins:
+    def sync_wins(self, current: list[WonGiveawayInfo]) -> list[WonGiveawayInfo]:
+        """Keep only unclaimed wins and return newly discovered ones to notify."""
+        is_first = not self.baseline_done
+        new_wins: list[WonGiveawayInfo] = []
+        current_by_source: dict[str, dict[str, WonGiveawayInfo]] = {
+            "steamgifts": {},
+            "indiegala": {},
+        }
+
+        for info in current:
             source = info.source if info.source in self._wins else "steamgifts"
-            if info.code not in self._wins[source]:
-                self._wins[source][info.code] = StoredWin.from_info(info)
-            else:
-                stored = self._wins[source][info.code]
-                stored.name = info.name or stored.name
-                stored.image_url = info.image_url or stored.image_url
-                stored.url = info.url or stored.url
+            current_by_source[source][info.code] = info
+
+        for source in ("steamgifts", "indiegala"):
+            current_codes = current_by_source[source]
+
+            for code in list(self._wins[source].keys()):
+                if code not in current_codes:
+                    del self._wins[source][code]
+
+            for code, info in current_codes.items():
+                if code in self._wins[source]:
+                    stored = self._wins[source][code]
+                    if info.name:
+                        stored.name = info.name
+                    if info.image_url:
+                        stored.image_url = info.image_url
+                    if info.url:
+                        stored.url = info.url
+                    continue
+
+                self._wins[source][code] = StoredWin.from_info(info)
+                if not is_first:
+                    new_wins.append(info)
+
         self.baseline_done = True
         self.save()
-
-    def find_new(self, wins: list[WonGiveawayInfo]) -> list[WonGiveawayInfo]:
-        new_wins: list[WonGiveawayInfo] = []
-        for info in wins:
-            source = info.source if info.source in self._wins else "steamgifts"
-            if info.code in self._wins[source]:
-                stored = self._wins[source][info.code]
-                if info.name:
-                    stored.name = info.name
-                if info.image_url:
-                    stored.image_url = info.image_url
-                if info.url:
-                    stored.url = info.url
-                continue
-            new_wins.append(info)
         return new_wins
-
-    def mark_seen(self, info: WonGiveawayInfo) -> None:
-        source = info.source if info.source in self._wins else "steamgifts"
-        self._wins[source][info.code] = StoredWin.from_info(info)
