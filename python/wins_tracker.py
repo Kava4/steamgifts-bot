@@ -4,6 +4,9 @@ from datetime import datetime, timezone
 
 from paths import get_data_dir
 from steamgifts_service import WonGiveawayInfo
+
+
+@dataclass
 class StoredWin:
     code: str
     name: str
