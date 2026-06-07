@@ -10,6 +10,7 @@ Based on [stilManiac/steamgifts-bot](https://github.com/stilManiac/steamgifts-bo
 - Activity feed with Steam game images
 - **Entered** tab — active joined giveaways with time remaining and Remove
 - **IndieGala (beta)** — optional auto-join on [indiegala.com/giveaways](https://www.indiegala.com/giveaways)
+- **Wins tab** — track wins on SteamGifts and IndieGala; tray + Activity alerts
 - Manual select (Yes/No per giveaway)
 - Smart wait when points are insufficient
 - System tray — bot keeps running in the background
@@ -52,8 +53,9 @@ Cookie file: `%APPDATA%\SteamGiftsBot\indiegala_cookie.txt`
 2. **Start Bot** — begin automatic entry
 3. **Activity** — entered giveaways, waiting states, manual prompts
 4. **Entered** — open giveaways you joined; refresh list and remove entries
-5. **Console** — full event log
-6. **Settings** — refresh interval (5/10/15 min), max pages to scan
+5. **Wins** — giveaways you won (with notifications when something new appears)
+6. **Console** — full event log
+7. **Settings** — refresh interval (5/10/15 min), max pages to scan
 
 While the bot waits, a **countdown** appears under the status pill (list refresh or points timer).
 
@@ -98,6 +100,8 @@ python/
   bot.py               # Bot logic
   widgets.py           # Activity cards
   steamgifts_service.py
+  indiegala_service.py
+  wins_tracker.py
   http_client.py       # curl HTTP (bypasses Cloudflare)
   settings.py
   paths.py
