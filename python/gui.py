@@ -493,6 +493,22 @@ class SteamgiftsWindow(QMainWindow):
             )
         )
 
+        self.max_end_hours_spin = QSpinBox()
+        self.max_end_hours_spin.setRange(0, 72)
+        self.max_end_hours_spin.setSpecialValueText("Off")
+        self.max_end_hours_spin.setSuffix(" h")
+        self.max_end_hours_spin.setFixedWidth(148)
+        self.max_end_hours_spin.valueChanged.connect(
+            self._on_max_end_hours_changed
+        )
+        bot_settings_layout.addWidget(
+            self._create_setting_row(
+                "Max time until giveaway ends",
+                "Only enter giveaways ending within this window. Set to Off to ignore end time.",
+                self.max_end_hours_spin,
+            )
+        )
+
         divider2 = QFrame()
         divider2.setObjectName("settingDivider")
         divider2.setFixedHeight(1)
@@ -670,6 +686,12 @@ class SteamgiftsWindow(QMainWindow):
         self.max_pages_spin.setValue(self.settings.get("max_pages", 5))
         self.max_pages_spin.blockSignals(False)
 
+        self.max_end_hours_spin.blockSignals(True)
+        self.max_end_hours_spin.setValue(
+            self.settings.get("max_giveaway_end_hours", 3)
+        )
+        self.max_end_hours_spin.blockSignals(False)
+
         self.indiegala_delay_spin.blockSignals(True)
         self.indiegala_delay_spin.setValue(
             self.settings.get("indiegala_entry_delay", 5)
@@ -739,7 +761,9 @@ class SteamgiftsWindow(QMainWindow):
         self._persist_settings()
         if self.bot:
             self.bot.apply_bot_settings(
-                minutes, self.settings.get("max_pages", 5)
+                minutes,
+                self.settings.get("max_pages", 5),
+                self.settings.get("max_giveaway_end_hours", 3),
             )
 
     def _on_max_pages_changed(self, value: int) -> None:
@@ -747,7 +771,19 @@ class SteamgiftsWindow(QMainWindow):
         self._persist_settings()
         if self.bot:
             self.bot.apply_bot_settings(
-                self.settings.get("refresh_delay_minutes", 10), value
+                self.settings.get("refresh_delay_minutes", 10),
+                value,
+                self.settings.get("max_giveaway_end_hours", 3),
+            )
+
+    def _on_max_end_hours_changed(self, value: int) -> None:
+        self.settings["max_giveaway_end_hours"] = value
+        self._persist_settings()
+        if self.bot:
+            self.bot.apply_bot_settings(
+                self.settings.get("refresh_delay_minutes", 10),
+                self.settings.get("max_pages", 5),
+                value,
             )
 
     def _on_indiegala_toggled(self, checked: bool) -> None:
@@ -1087,6 +1123,7 @@ class SteamgiftsWindow(QMainWindow):
             manual_select=self.settings.get("manual_select_giveaways", False),
             refresh_delay_minutes=self.settings.get("refresh_delay_minutes", 10),
             max_pages=self.settings.get("max_pages", 5),
+            max_giveaway_end_hours=self.settings.get("max_giveaway_end_hours", 3),
             indiegala_cookie=indiegala_cookie,
             enable_indiegala=enable_indiegala,
             indiegala_entry_delay=self.settings.get("indiegala_entry_delay", 5),

@@ -5,7 +5,13 @@ from datetime import datetime
 from typing import Callable, Optional
 
 from indiegala_service import IndieGalaService
-from steamgifts_service import GiveawayInfo, SteamgiftsService, WonGiveawayInfo
+from steamgifts_service import (
+    GiveawayInfo,
+    SteamgiftsService,
+    WonGiveawayInfo,
+    format_giveaway_ends,
+    giveaway_within_end_window,
+)
 from wins_tracker import WinsTracker
 
 
@@ -26,6 +32,7 @@ class SteamgiftsBot:
         entry_delay: int = 2,
         refresh_delay_minutes: int = 10,
         max_pages: int = 5,
+        max_giveaway_end_hours: int = 3,
         indiegala_cookie: str = "",
         enable_indiegala: bool = False,
         indiegala_entry_delay: int = 5,
@@ -44,6 +51,7 @@ class SteamgiftsBot:
         self.entry_delay = entry_delay
         self.refresh_delay_minutes = refresh_delay_minutes
         self.max_pages = max(1, max_pages)
+        self.max_giveaway_end_hours = max(0, max_giveaway_end_hours)
         self.refresh_delay = refresh_delay_minutes * 60
         self.indiegala_entry_delay = max(3, indiegala_entry_delay)
         self.indiegala_min_cost = max(0, indiegala_min_cost)
@@ -73,11 +81,16 @@ class SteamgiftsBot:
         self.manual_select = enabled
 
     def apply_bot_settings(
-        self, refresh_delay_minutes: int, max_pages: int
+        self,
+        refresh_delay_minutes: int,
+        max_pages: int,
+        max_giveaway_end_hours: int | None = None,
     ) -> None:
         self.refresh_delay_minutes = refresh_delay_minutes
         self.refresh_delay = refresh_delay_minutes * 60
         self.max_pages = max(1, max_pages)
+        if max_giveaway_end_hours is not None:
+            self.max_giveaway_end_hours = max(0, max_giveaway_end_hours)
 
     def apply_indiegala_settings(
         self, entry_delay: int, min_cost: int
@@ -189,6 +202,24 @@ class SteamgiftsBot:
             if self.on_win:
                 self.on_win(win)
 
+    def _skip_due_to_end_window(self, giveaway: GiveawayInfo) -> bool:
+        if giveaway_within_end_window(giveaway, self.max_giveaway_end_hours):
+            return False
+
+        source = "SteamGifts" if giveaway.source == "steamgifts" else "IndieGala"
+        ends_text = format_giveaway_ends(giveaway.ends_at, giveaway.ends_label)
+        if ends_text:
+            self.write_log(
+                f"[{source}] Skipped {giveaway.name} — {ends_text}, "
+                f"max {self.max_giveaway_end_hours}h"
+            )
+        else:
+            self.write_log(
+                f"[{source}] Skipped {giveaway.name} — end time unknown, "
+                f"max {self.max_giveaway_end_hours}h"
+            )
+        return True
+
     def _process_steamgifts_page(self) -> bool:
         while not self._stop_event.is_set():
             self.points, self.xsrf_token, giveaways = (
@@ -210,6 +241,11 @@ class SteamgiftsBot:
             for giveaway in giveaways:
                 if self._stop_event.is_set():
                     return False
+
+                if not giveaway.is_entered and self._skip_due_to_end_window(
+                    giveaway
+                ):
+                    continue
 
                 if self.points - giveaway.cost < 0 and not giveaway.is_entered:
                     timer_info = self.service.fetch_points_timer()
@@ -438,6 +474,9 @@ class SteamgiftsBot:
                 return entered_any
 
             if giveaway.is_entered or self.points < giveaway.cost:
+                continue
+
+            if self._skip_due_to_end_window(giveaway):
                 continue
 
             if self.manual_select:

@@ -156,6 +156,32 @@ def format_giveaway_ends(ends_at: Optional[int], ends_label: str) -> str:
     return f"{minutes} minute{'s' if minutes != 1 else ''} remaining"
 
 
+def giveaway_remaining_seconds(
+    giveaway: GiveawayInfo, now: Optional[int] = None
+) -> Optional[int]:
+    if not giveaway.ends_at:
+        return None
+
+    current = now or int(time.time())
+    if giveaway.ends_at <= current:
+        return 0
+
+    return giveaway.ends_at - current
+
+
+def giveaway_within_end_window(
+    giveaway: GiveawayInfo, max_hours: int, now: Optional[int] = None
+) -> bool:
+    if max_hours <= 0:
+        return True
+
+    remaining = giveaway_remaining_seconds(giveaway, now)
+    if remaining is None:
+        return giveaway.source != "steamgifts"
+
+    return remaining <= max_hours * 3600
+
+
 def parse_giveaway_row(element) -> GiveawayInfo:
     cost_el = element.select(".giveaway__heading__thin")
     game_cost = (
