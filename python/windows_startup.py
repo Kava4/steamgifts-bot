@@ -4,11 +4,12 @@ from pathlib import Path
 
 APP_NAME = "SteamGiftsBot"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+STARTUP_ARG = "--startup"
 
 
 def _startup_command() -> str:
     if getattr(sys, "frozen", False):
-        return f'"{Path(sys.executable)}"'
+        return f'"{Path(sys.executable)}" {STARTUP_ARG}'
 
     python_exe = Path(sys.executable)
     if python_exe.name.lower() == "python.exe":
@@ -17,7 +18,11 @@ def _startup_command() -> str:
             python_exe = pythonw
 
     main_script = Path(__file__).resolve().parent / "main.py"
-    return f'"{python_exe}" "{main_script}"'
+    return f'"{python_exe}" "{main_script}" {STARTUP_ARG}'
+
+
+def is_launched_from_startup(argv: list[str] | None = None) -> bool:
+    return STARTUP_ARG in (argv if argv is not None else sys.argv)
 
 
 def is_startup_enabled() -> bool:
@@ -45,3 +50,9 @@ def set_startup_enabled(enabled: bool) -> None:
                 winreg.DeleteValue(key, APP_NAME)
             except FileNotFoundError:
                 pass
+
+
+def refresh_startup_command() -> None:
+    """Rewrite the Run key so older installs pick up --startup."""
+    if is_startup_enabled():
+        set_startup_enabled(True)

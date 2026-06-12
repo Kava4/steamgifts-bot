@@ -162,9 +162,10 @@ class BotSignals(QObject):
 
 
 class SteamgiftsWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, launched_from_startup: bool = False):
         super().__init__()
 
+        self._launched_from_startup = launched_from_startup
         self.bot: SteamgiftsBot | None = None
         self._cached_cookie = ""
         self._cached_indiegala_cookie = ""
@@ -201,6 +202,19 @@ class SteamgiftsWindow(QMainWindow):
         self._apply_settings_to_ui()
         self._show_welcome_if_needed()
         self._schedule_startup_update_check()
+        if self._launched_from_startup:
+            self._apply_startup_launch()
+
+    def _apply_startup_launch(self) -> None:
+        self.hide()
+        self._append_console("Launched with Windows — starting in tray")
+        self.tray.showMessage(
+            "SteamGifts Bot",
+            "Starting in the system tray…",
+            QSystemTrayIcon.MessageIcon.Information,
+            2500,
+        )
+        QTimer.singleShot(800, lambda: self._start_bot(silent=True))
 
     def _build_ui(self) -> None:
         self.setWindowTitle(f"SteamGifts Bot v{APP_VERSION}")
@@ -299,6 +313,9 @@ class SteamgiftsWindow(QMainWindow):
 
         if WINDOWS_STARTUP_AVAILABLE:
             self.startup_checkbox = QCheckBox("Start with Windows")
+            self.startup_checkbox.setToolTip(
+                "Launch minimized to the tray on login and start the bot automatically."
+            )
             self.startup_checkbox.toggled.connect(self._on_startup_toggled)
             settings_layout.addWidget(self.startup_checkbox)
 
@@ -790,6 +807,7 @@ class SteamgiftsWindow(QMainWindow):
         )
 
         if WINDOWS_STARTUP_AVAILABLE:
+            windows_startup.refresh_startup_command()
             actual_startup = windows_startup.is_startup_enabled()
             self.settings["start_with_windows"] = actual_startup
             self.startup_checkbox.setChecked(actual_startup)
@@ -1299,24 +1317,44 @@ class SteamgiftsWindow(QMainWindow):
         QMessageBox.warning(self, "Remove", message)
         self._refresh_entered()
 
-    def _start_bot(self) -> None:
+    def _start_bot(self, silent: bool = False) -> None:
         cookie = self.cookie_input.text().strip()
         if not cookie:
-            QMessageBox.warning(
-                self,
-                "Cookie",
-                "Enter PHPSESSID in Settings → Accounts before starting.",
-            )
+            if silent:
+                message = "[Startup] Bot not started — PHPSESSID cookie is missing"
+                self._append_console(message)
+                self.tray.showMessage(
+                    "SteamGifts Bot",
+                    "Open the app and set your cookie in Settings.",
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    4000,
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Cookie",
+                    "Enter PHPSESSID in Settings → Accounts before starting.",
+                )
             return
 
         enable_indiegala = self.settings.get("enable_indiegala_beta", False)
         indiegala_cookie = self._save_indiegala_cookie(silent=True) or self._indiegala_cookie_text()
         if enable_indiegala and not indiegala_cookie:
-            QMessageBox.warning(
-                self,
-                "IndieGala",
-                "Enable IndieGala is on — set your cookie in Settings → Accounts.",
-            )
+            if silent:
+                message = "[Startup] Bot not started — IndieGala cookie is missing"
+                self._append_console(message)
+                self.tray.showMessage(
+                    "SteamGifts Bot",
+                    "IndieGala is enabled but cookie is missing.",
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    4000,
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "IndieGala",
+                    "Enable IndieGala is on — set your cookie in Settings → Accounts.",
+                )
             return
 
         if self.bot and self.bot.is_running:
@@ -1636,6 +1674,11 @@ class SteamgiftsWindow(QMainWindow):
 
 
 def run_app() -> None:
+    launched_from_startup = (
+        WINDOWS_STARTUP_AVAILABLE
+        and windows_startup.is_launched_from_startup(sys.argv)
+    )
+
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setStyle("Fusion")
@@ -1651,7 +1694,8 @@ def run_app() -> None:
     if not app_icon.isNull():
         app.setWindowIcon(app_icon)
 
-    window = SteamgiftsWindow()
-    window.show()
+    window = SteamgiftsWindow(launched_from_startup=launched_from_startup)
+    if not launched_from_startup:
+        window.show()
 
     sys.exit(app.exec())

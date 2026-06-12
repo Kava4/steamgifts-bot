@@ -14,12 +14,12 @@ Based on [stilManiac/steamgifts-bot](https://github.com/stilManiac/steamgifts-bo
 - Manual select (Yes/No per giveaway)
 - Smart wait when points are insufficient
 - System tray — bot keeps running in the background
-- Start with Windows (optional)
+- Start with Windows — launches minimized to tray and auto-starts the bot
 - **Auto-update** — checks GitHub Releases on startup and installs new builds
 
 ## Download
 
-Download `SteamGiftsBot.exe` from [Releases](https://github.com/AimSyncCore/SteamGifts-bot/releases) (current: **v1.0.0**).
+Download `SteamGiftsBot.exe` from [Releases](https://github.com/AimSyncCore/SteamGifts-bot/releases) (current: **v1.0.1**).
 
 ## Quick start
 
