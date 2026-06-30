@@ -19,7 +19,7 @@ Based on [stilManiac/steamgifts-bot](https://github.com/stilManiac/steamgifts-bo
 
 ## Download
 
-Download `SteamGiftsBot.exe` from [Releases](https://github.com/AimSyncCore/SteamGifts-bot/releases) (current: **v1.0.1**).
+Download `SteamGiftsBot.exe` from [Releases](https://github.com/Kava4/SteamGifts-bot/releases) (current: **v1.0.1**).
 
 ## Quick start
 
@@ -62,7 +62,7 @@ While the bot waits, a **countdown** appears under the status pill (list refresh
 
 ### Updates
 
-The packaged app checks [GitHub Releases](https://github.com/AimSyncCore/SteamGifts-bot/releases) for a newer `SteamGiftsBot.exe`. When an update is found, it downloads the file and restarts to replace the running exe. You can also use **Settings → Check for updates**.
+The packaged app checks [GitHub Releases](https://github.com/Kava4/SteamGifts-bot/releases) for a newer `SteamGiftsBot.exe`. When an update is found, it downloads the file and restarts to replace the running exe. You can also use **Settings → Check for updates**.
 
 ### System tray
 
