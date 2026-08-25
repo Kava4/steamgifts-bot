@@ -1,0 +1,12 @@
+services:
+  steamgifts-bot:
+    build: .
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./data:/data
+    environment:
+      STEAMGIFTS_DATA_DIR: /data
+      # Optional: set a password to protect the WebUI
+      # WEBUI_PASSWORD: change-me
+    restart: unless-stopped

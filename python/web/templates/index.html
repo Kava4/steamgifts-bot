@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SteamGifts Bot v{{ version }}</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="sidebar-inner">
+        <h1 class="app-title">SteamGifts Bot</h1>
+        <p class="app-subtitle">Auto-entry · steamgifts.com</p>
+
+        <div id="statusPill" class="status-pill stopped">STOPPED</div>
+        <div id="countdownLabel" class="countdown-label hidden"></div>
+
+        <div class="stats-row">
+          <div class="stat-card">
+            <div id="pointsValue" class="stat-value">-</div>
+            <div class="stat-label">POINTS</div>
+          </div>
+          <div class="stat-card">
+            <div id="pageValue" class="stat-value">-</div>
+            <div class="stat-label">PAGE</div>
+          </div>
+        </div>
+
+        <div class="section-title">CONTROLS</div>
+        <button id="fetchPointsBtn" class="btn accent sidebar-btn" type="button">Fetch Points</button>
+        <button id="startBtn" class="btn primary sidebar-btn" type="button">Start Bot</button>
+        <button id="stopBtn" class="btn danger sidebar-btn" type="button" disabled>Stop Bot</button>
+        <button id="clearLogsBtn" class="btn sidebar-btn" type="button">Clear Logs</button>
+
+        <div class="section-title">SETTINGS</div>
+        <div class="panel sidebar-settings">
+          <label class="check-row">
+            <input id="manualSelectCheckbox" type="checkbox" />
+            <span>Manual select</span>
+          </label>
+        </div>
+
+        {% if auth_enabled %}
+        <form method="post" action="/logout" class="logout-form">
+          <button class="btn sidebar-btn" type="submit">Log out</button>
+        </form>
+        {% endif %}
+      </div>
+    </aside>
+
+    <main class="content">
+      <div class="header-block">
+        <h2 id="contentHeader" class="content-header">Activity</h2>
+        <p id="contentSubheader" class="content-subheader">Giveaway entries and bot status</p>
+        <p id="contentBalances" class="content-balances hidden"></p>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="activity" type="button">Activity</button>
+        <button class="tab" data-tab="entered" type="button">Entered</button>
+        <button class="tab" data-tab="wins" type="button">Wins</button>
+        <button class="tab" data-tab="console" type="button">Console</button>
+        <button class="tab" data-tab="settings" type="button">Settings</button>
+      </div>
+
+      <div class="tab-panels">
+        <section id="panel-activity" class="tab-panel active">
+          <div id="activityFeed" class="feed"></div>
+          <div id="activityEmpty" class="empty-state">
+            No activity yet<br /><br />
+            1. Paste your PHPSESSID and click Save<br />
+            2. Fetch Points<br />
+            3. Start Bot<br /><br />
+            Entered giveaways, waiting states, and manual prompts will appear here.
+          </div>
+        </section>
+
+        <section id="panel-entered" class="tab-panel">
+          <div class="feed-toolbar">
+            <button id="refreshEnteredBtn" class="btn accent" type="button">Refresh</button>
+          </div>
+          <div id="enteredFeed" class="feed"></div>
+          <div id="enteredEmpty" class="empty-state">
+            No entered giveaways loaded yet.<br /><br />
+            Open this tab and click Refresh.
+          </div>
+        </section>
+
+        <section id="panel-wins" class="tab-panel">
+          <div id="winsFeed" class="feed"></div>
+          <div id="winsEmpty" class="empty-state">
+            No wins tracked yet.<br /><br />
+            Wins appear here when the bot detects them.
+          </div>
+        </section>
+
+        <section id="panel-console" class="tab-panel">
+          <pre id="consoleLog" class="console-log"></pre>
+        </section>
+
+        <section id="panel-settings" class="tab-panel">
+          <div class="settings-scroll">
+            <div class="settings-section">
+              <div class="section-title">ACCOUNTS</div>
+
+              <label class="setting-label">SteamGifts · PHPSESSID</label>
+              <p class="setting-hint">DevTools → Application → Cookies → steamgifts.com → PHPSESSID</p>
+              <input id="cookieInput" class="input" type="password" placeholder="PHPSESSID" autocomplete="off" />
+              <div class="btn-row">
+                <button id="showCookieBtn" class="btn" type="button">Show</button>
+                <button id="saveCookieBtn" class="btn accent" type="button">Save</button>
+              </div>
+
+              <div class="setting-divider"></div>
+
+              <label class="setting-label">IndieGala (beta)</label>
+              <label class="check-row">
+                <input id="enableIndiegalaCheckbox" type="checkbox" />
+                <span>Enable IndieGala giveaways</span>
+              </label>
+              <p class="setting-hint">
+                Paste full JSON export from Cookie-Editor / DevTools, or sessionid=...; csrftoken=...
+              </p>
+              <textarea id="indiegalaCookieInput" class="textarea" placeholder="JSON cookie export or sessionid=...; csrftoken=..."></textarea>
+              <div class="btn-row">
+                <button id="testIndiegalaBtn" class="btn accent" type="button">Test Session</button>
+                <button id="saveIndiegalaBtn" class="btn" type="button">Save</button>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <div class="section-title">BOT BEHAVIOR</div>
+
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">List refresh interval</div>
+                  <p class="setting-hint">Wait time after scanning all pages before starting again from page 1.</p>
+                </div>
+                <select id="refreshCombo" class="select">
+                  <option value="5">5 min</option>
+                  <option value="10">10 min</option>
+                  <option value="15">15 min</option>
+                </select>
+              </div>
+
+              <div class="setting-divider"></div>
+
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">Max pages to scan</div>
+                  <p class="setting-hint">How many search pages the bot processes each cycle (page 1 through N).</p>
+                </div>
+                <input id="maxPagesSpin" class="spin" type="number" min="1" max="50" />
+              </div>
+
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">Max time until giveaway ends</div>
+                  <p class="setting-hint">Only enter giveaways ending within this window. Set to 0 (Off) to ignore end time.</p>
+                </div>
+                <input id="maxEndHoursSpin" class="spin" type="number" min="0" max="72" />
+              </div>
+
+              <div class="setting-divider"></div>
+
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">IndieGala entry delay (beta)</div>
+                  <p class="setting-hint">Seconds between IndieGala joins. Keep this higher to avoid rate limits.</p>
+                </div>
+                <input id="indiegalaDelaySpin" class="spin" type="number" min="3" max="30" />
+              </div>
+
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">IndieGala minimum cost</div>
+                  <p class="setting-hint">Skip giveaways below this ticket price. Use 3+ to avoid cheap junk. 0 = off.</p>
+                </div>
+                <input id="indiegalaMinCostSpin" class="spin" type="number" min="0" max="100" />
+              </div>
+
+              <div class="setting-divider"></div>
+
+              <label class="check-row">
+                <input id="notifyOnWinCheckbox" type="checkbox" />
+                <span>Notify when you win a giveaway</span>
+              </label>
+
+              <p class="setting-hint version-hint">WebUI · Version {{ version }}</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,6 +1,14 @@
 # User secrets & local data
 cookie.txt
 settings.json
+indiegala_cookie.txt
+known_wins.json
+data/
+*.tgz
+
+# Deploy / local helpers (never commit credentials)
+_deploy*.py
+deploy_pi.py
 
 # Python
 __pycache__/
@@ -33,5 +41,5 @@ Desktop.ini
 *.log
 *.tmp
 
-# Legacy (removed Node version)
+# Legacy
 node_modules/

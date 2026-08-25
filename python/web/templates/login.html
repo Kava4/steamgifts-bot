@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SteamGifts Bot · Login</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body class="login-body">
+  <form class="login-card" method="post" action="/login">
+    <h1 class="app-title">SteamGifts Bot</h1>
+    <p class="app-subtitle">WebUI · v{{ version }}</p>
+    {% if error %}
+    <p class="login-error">{{ error }}</p>
+    {% endif %}
+    <label class="setting-label" for="password">Password</label>
+    <input id="password" class="input" type="password" name="password" autofocus required />
+    <button class="btn primary" type="submit">Sign in</button>
+  </form>
+</body>
+</html>

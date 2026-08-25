@@ -1,27 +1,28 @@
 # SteamGifts Bot
 
-Desktop app for automatic giveaway entry on [steamgifts.com](https://www.steamgifts.com/).
+Desktop app and Docker WebUI for automatic giveaway entry on [steamgifts.com](https://www.steamgifts.com/).
 
-Based on [stilManiac/steamgifts-bot](https://github.com/stilManiac/steamgifts-bot), rewritten in **Python + PyQt6** with a modern GUI.
+Based on [stilManiac/steamgifts-bot](https://github.com/stilManiac/steamgifts-bot), rewritten in **Python + PyQt6**, with an optional **browser WebUI** for headless / Raspberry Pi installs.
 
 ## Features
 
 - Automatic giveaway entry
 - Activity feed with Steam game images
-- **Entered** tab — active joined giveaways with time remaining and Remove
+- **Entered** tab — joined giveaways with time remaining and Remove
 - **IndieGala (beta)** — optional auto-join on [indiegala.com/giveaways](https://www.indiegala.com/giveaways)
-- **Wins tab** — track wins on SteamGifts and IndieGala; tray + Activity alerts
+- **Wins** tab — track wins on SteamGifts and IndieGala
 - Manual select (Yes/No per giveaway)
 - Smart wait when points are insufficient
-- System tray — bot keeps running in the background
-- Start with Windows — launches minimized to tray and auto-starts the bot
-- **Auto-update** — checks GitHub Releases on startup and installs new builds
+- System tray (desktop) — keep running in the background
+- Start with Windows (desktop)
+- Auto-update from GitHub Releases (packaged desktop exe)
+- **Docker + WebUI** — same layout in the browser (`:8765`)
 
-## Download
+## Download (desktop)
 
-Download `SteamGiftsBot.exe` from [Releases](https://github.com/Kava4/SteamGifts-bot/releases) (current: **v1.0.1**).
+Download `SteamGiftsBot.exe` from [Releases](https://github.com/Kava4/steamgifts-bot/releases) (current: **v1.0.1**).
 
-## Quick start
+## Quick start (desktop)
 
 ### 1. Configure steamgifts.com
 
@@ -35,43 +36,56 @@ Download `SteamGiftsBot.exe` from [Releases](https://github.com/Kava4/SteamGifts
 2. Copy the `PHPSESSID` value
 3. In the app: **Settings → Accounts** → paste → **Save**
 
-The cookie is saved to `%APPDATA%\SteamGiftsBot\cookie.txt`.
+Saved to `%APPDATA%\SteamGiftsBot\cookie.txt`.
 
 ### IndieGala (beta)
 
 1. Log in at [indiegala.com](https://www.indiegala.com/)
 2. DevTools → **Cookies** → copy `sessionid` (and `csrftoken` if available)
-3. Sidebar → **Settings → Accounts** → paste → **Save**
-4. Enable **Enable IndieGala giveaways** and set entry delay / **minimum cost** below
+3. **Settings → Accounts** → paste → **Save**
+4. Enable **Enable IndieGala giveaways** and set entry delay / minimum cost
 
-After each SteamGifts page, the bot scans the matching IndieGala page. Use a **slow entry delay** (5+ sec) — fast automation can trigger IndieGala rate limits.
+Use a **slow entry delay** (5+ sec) to reduce rate limits.
 
 Cookie file: `%APPDATA%\SteamGiftsBot\indiegala_cookie.txt`
 
 ### 3. Usage
 
-1. **Fetch Points** — verify session and check points
-2. **Start Bot** — begin automatic entry
-3. **Activity** — entered giveaways, waiting states, manual prompts
-4. **Entered** — open giveaways you joined; refresh list and remove entries
-5. **Wins** — giveaways you won (with notifications when something new appears)
-6. **Console** — full event log
-7. **Settings** — refresh interval (5/10/15 min), max pages to scan, max giveaway end window, updates
+1. **Fetch Points** — verify session
+2. **Start Bot** — automatic entry
+3. **Activity** / **Entered** / **Wins** / **Console** / **Settings**
 
-While the bot waits, a **countdown** appears under the status pill (list refresh or points timer).
-
-### Updates
-
-The packaged app checks [GitHub Releases](https://github.com/Kava4/SteamGifts-bot/releases) for a newer `SteamGiftsBot.exe`. When an update is found, it downloads the file and restarts to replace the running exe. You can also use **Settings → Check for updates**.
+While waiting, a **countdown** appears under the status pill.
 
 ### System tray
 
-- **Minimize to tray on close** — closing the window (X) hides it; the bot keeps running. To exit: tray → **Quit**
-- Double-click the tray icon to open the window
+- Closing the window (X) can minimize to tray (setting)
+- Tray → **Quit** to exit fully
 
-## Development
+## Docker + WebUI
 
-**Requirements:** Python 3.11+, Windows, `curl` (included with Windows 10/11)
+Good for Raspberry Pi / Linux servers — no desktop UI required.
+
+```bash
+docker compose up -d --build
+```
+
+Open [http://localhost:8765](http://localhost:8765) (or `http://<host-ip>:8765`).
+
+Cookies and settings are stored in `./data` (Docker volume).
+
+Optional password in `docker-compose.yml`:
+
+```yaml
+environment:
+  WEBUI_PASSWORD: change-me
+```
+
+WebUI-only dependencies: `requirements-web.txt` (no PyQt6).
+
+## Development (desktop)
+
+**Requirements:** Python 3.11+, Windows, `curl`
 
 ```powershell
 pip install -r requirements.txt
@@ -86,40 +100,51 @@ python python/main.py
 
 Output: `dist/SteamGiftsBot.exe`
 
+### WebUI without Docker
+
+```powershell
+pip install -r requirements-web.txt
+$env:STEAMGIFTS_DATA_DIR = "$PWD\data"
+python python/web_main.py
+```
+
 ## Data files
 
-| File | Location | Description |
-|------|----------|-------------|
-| `cookie.txt` | `%APPDATA%\SteamGiftsBot\` | PHPSESSID session token |
-| `indiegala_cookie.txt` | `%APPDATA%\SteamGiftsBot\` | IndieGala sessionid (beta) |
-| `settings.json` | `%APPDATA%\SteamGiftsBot\` | App settings |
+| File | Desktop | Docker |
+|------|---------|--------|
+| `cookie.txt` | `%APPDATA%\SteamGiftsBot\` | `./data` |
+| `indiegala_cookie.txt` | same | `./data` |
+| `settings.json` | same | `./data` |
 
-> Do not commit `cookie.txt` to GitHub — it contains your session token.
+> Do not commit cookies or `./data` — they contain session tokens.
 
 ## Project structure
 
 ```
 python/
-  main.py              # Entry point
-  gui.py               # PyQt6 UI
-  bot.py               # Bot logic
-  widgets.py           # Activity cards
+  main.py                 # Desktop entry
+  web_main.py             # WebUI / Docker entry
+  gui.py                  # PyQt6 UI
+  bot.py
+  widgets.py
   steamgifts_service.py
   indiegala_service.py
   wins_tracker.py
-  http_client.py       # curl HTTP (bypasses Cloudflare)
+  http_client.py
   settings.py
   paths.py
   version.py
   updater.py
   windows_startup.py
   theme.py
+  web/                    # FastAPI + static WebUI
 assets/
-  icon.ico             # App icon (window, tray, exe)
 scripts/
-  generate_icon.py
 build.ps1
-requirements.txt
+Dockerfile
+docker-compose.yml
+requirements.txt          # Desktop + WebUI
+requirements-web.txt      # Docker / WebUI only
 ```
 
 ## License

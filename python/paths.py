@@ -13,8 +13,12 @@ def get_app_dir() -> Path:
 
 
 def get_data_dir() -> Path:
-    appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
-    path = Path(appdata) / APP_NAME
+    override = os.environ.get("STEAMGIFTS_DATA_DIR", "").strip()
+    if override:
+        path = Path(override).expanduser()
+    else:
+        appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
+        path = Path(appdata) / APP_NAME
     path.mkdir(parents=True, exist_ok=True)
     return path
 
