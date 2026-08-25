@@ -80,18 +80,35 @@
           <div class="feed-toolbar">
             <button id="refreshEnteredBtn" class="btn accent" type="button">Refresh</button>
           </div>
-          <div id="enteredFeed" class="feed"></div>
-          <div id="enteredEmpty" class="empty-state">
-            No entered giveaways loaded yet.<br /><br />
-            Open this tab and click Refresh.
+          <div class="subtabs" data-group="entered">
+            <button class="subtab active" data-subtab="entered-sg" type="button">SteamGifts</button>
+            <button class="subtab" data-subtab="entered-ig" type="button">IndieGala</button>
+          </div>
+          <div id="entered-sg" class="subtab-panel active">
+            <div id="enteredFeedSg" class="feed"></div>
+            <div id="enteredEmptySg" class="empty-state compact">No SteamGifts entries.</div>
+          </div>
+          <div id="entered-ig" class="subtab-panel">
+            <div id="enteredFeedIg" class="feed"></div>
+            <div id="enteredEmptyIg" class="empty-state compact">No IndieGala entries.</div>
           </div>
         </section>
 
         <section id="panel-wins" class="tab-panel">
-          <div id="winsFeed" class="feed"></div>
-          <div id="winsEmpty" class="empty-state">
-            No wins tracked yet.<br /><br />
-            Wins appear here when the bot detects them.
+          <div class="feed-toolbar">
+            <button id="refreshWinsBtn" class="btn accent" type="button">Refresh</button>
+          </div>
+          <div class="subtabs" data-group="wins">
+            <button class="subtab active" data-subtab="wins-sg" type="button">SteamGifts</button>
+            <button class="subtab" data-subtab="wins-ig" type="button">IndieGala</button>
+          </div>
+          <div id="wins-sg" class="subtab-panel active">
+            <div id="winsFeedSg" class="feed"></div>
+            <div id="winsEmptySg" class="empty-state compact">No unclaimed SteamGifts wins.</div>
+          </div>
+          <div id="wins-ig" class="subtab-panel">
+            <div id="winsFeedIg" class="feed"></div>
+            <div id="winsEmptyIg" class="empty-state compact">No IndieGala wins.</div>
           </div>
         </section>
 
@@ -160,6 +177,14 @@
                   <p class="setting-hint">Only enter giveaways ending within this window. Set to 0 (Off) to ignore end time.</p>
                 </div>
                 <input id="maxEndHoursSpin" class="spin" type="number" min="0" max="72" />
+              </div>
+
+              <div class="setting-row">
+                <div>
+                  <div class="setting-label">Minimum points to enter</div>
+                  <p class="setting-hint">Skip giveaways below this cost. Use to avoid cheap junk. 0 = off.</p>
+                </div>
+                <input id="minPointsSpin" class="spin" type="number" min="0" max="400" />
               </div>
 
               <div class="setting-divider"></div>

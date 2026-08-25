@@ -11,6 +11,7 @@ DEFAULTS = {
     "refresh_delay_minutes": 10,
     "max_pages": 5,
     "max_giveaway_end_hours": 3,
+    "min_points": 0,
     "enable_indiegala_beta": False,
     "indiegala_entry_delay": 5,
     "indiegala_min_cost": 0,
@@ -53,6 +54,9 @@ def load_settings() -> dict:
     settings["max_giveaway_end_hours"] = max(
         0, min(int(settings.get("max_giveaway_end_hours", 3)), 72)
     )
+    settings["min_points"] = max(
+        0, min(int(settings.get("min_points", 0)), 400)
+    )
     settings["indiegala_entry_delay"] = max(
         3, min(int(settings.get("indiegala_entry_delay", 5)), 30)
     )
@@ -73,6 +77,9 @@ def save_settings(settings: dict) -> None:
     payload["max_pages"] = max(1, min(int(payload["max_pages"]), 50))
     payload["max_giveaway_end_hours"] = max(
         0, min(int(payload.get("max_giveaway_end_hours", 3)), 72)
+    )
+    payload["min_points"] = max(
+        0, min(int(payload.get("min_points", 0)), 400)
     )
     payload["indiegala_entry_delay"] = max(
         3, min(int(payload.get("indiegala_entry_delay", 5)), 30)

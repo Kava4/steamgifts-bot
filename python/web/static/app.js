@@ -1,4 +1,4 @@
-(() => {
+﻿(() => {
   const TAB_META = {
     activity: {
       title: "Activity",
@@ -42,10 +42,14 @@
     contentBalances: document.getElementById("contentBalances"),
     activityFeed: document.getElementById("activityFeed"),
     activityEmpty: document.getElementById("activityEmpty"),
-    enteredFeed: document.getElementById("enteredFeed"),
-    enteredEmpty: document.getElementById("enteredEmpty"),
-    winsFeed: document.getElementById("winsFeed"),
-    winsEmpty: document.getElementById("winsEmpty"),
+    enteredFeedSg: document.getElementById("enteredFeedSg"),
+    enteredEmptySg: document.getElementById("enteredEmptySg"),
+    enteredFeedIg: document.getElementById("enteredFeedIg"),
+    enteredEmptyIg: document.getElementById("enteredEmptyIg"),
+    winsFeedSg: document.getElementById("winsFeedSg"),
+    winsEmptySg: document.getElementById("winsEmptySg"),
+    winsFeedIg: document.getElementById("winsFeedIg"),
+    winsEmptyIg: document.getElementById("winsEmptyIg"),
     consoleLog: document.getElementById("consoleLog"),
     fetchPointsBtn: document.getElementById("fetchPointsBtn"),
     startBtn: document.getElementById("startBtn"),
@@ -53,6 +57,7 @@
     clearLogsBtn: document.getElementById("clearLogsBtn"),
     manualSelectCheckbox: document.getElementById("manualSelectCheckbox"),
     refreshEnteredBtn: document.getElementById("refreshEnteredBtn"),
+    refreshWinsBtn: document.getElementById("refreshWinsBtn"),
     cookieInput: document.getElementById("cookieInput"),
     showCookieBtn: document.getElementById("showCookieBtn"),
     saveCookieBtn: document.getElementById("saveCookieBtn"),
@@ -63,6 +68,7 @@
     refreshCombo: document.getElementById("refreshCombo"),
     maxPagesSpin: document.getElementById("maxPagesSpin"),
     maxEndHoursSpin: document.getElementById("maxEndHoursSpin"),
+    minPointsSpin: document.getElementById("minPointsSpin"),
     indiegalaDelaySpin: document.getElementById("indiegalaDelaySpin"),
     indiegalaMinCostSpin: document.getElementById("indiegalaMinCostSpin"),
     notifyOnWinCheckbox: document.getElementById("notifyOnWinCheckbox"),
@@ -132,7 +138,7 @@
     if (silver != null) parts.push(`${silver} iS`);
     if (username) parts.push(username);
     if (parts.length) {
-      els.contentBalances.textContent = parts.join(" · ");
+      els.contentBalances.textContent = parts.join(" \u00b7 ");
       els.contentBalances.classList.remove("hidden");
     } else {
       els.contentBalances.classList.add("hidden");
@@ -159,7 +165,7 @@
     const mins = Math.floor(countdownSeconds / 60);
     const secs = countdownSeconds % 60;
     const clock = `${mins}:${String(secs).padStart(2, "0")}`;
-    const label = countdownBaseLabel ? `${countdownBaseLabel} · ${clock}` : clock;
+    const label = countdownBaseLabel ? `${countdownBaseLabel} \u00b7 ${clock}` : clock;
     els.countdownLabel.textContent = label;
     els.countdownLabel.classList.remove("hidden");
   }
@@ -183,7 +189,7 @@
   }
 
   function cardImage(url) {
-    if (!url) return `<div class="card-image">…</div>`;
+    if (!url) return `<div class="card-image">ΓÇª</div>`;
     return `<div class="card-image"><img src="${escapeAttr(url)}" alt="" loading="lazy" /></div>`;
   }
 
@@ -239,7 +245,7 @@
         </div>
         ${link}
         ${ends}
-        ${card.entries_count != null ? `<div class="card-meta">${escapeHtml(card.entries_count)} entries · ${escapeHtml(card.entered_label || "")}</div>` : ""}
+        ${card.entries_count != null ? `<div class="card-meta">${escapeHtml(card.entries_count)} entries \u00b7 ${escapeHtml(card.entered_label || "")}</div>` : ""}
         ${actions}
       </div>`;
 
@@ -273,7 +279,8 @@
             body: JSON.stringify({ xsrf_token: btn.dataset.xsrf }),
           });
           wrapper.remove();
-          syncEmpty(els.enteredFeed, els.enteredEmpty);
+          syncEmpty(els.enteredFeedSg, els.enteredEmptySg);
+          syncEmpty(els.enteredFeedIg, els.enteredEmptyIg);
           toast("Entry removed");
         } catch (error) {
           btn.disabled = false;
@@ -343,32 +350,56 @@
   }
 
   function renderWins(wins) {
-    els.winsFeed.innerHTML = "";
-    (wins || []).forEach((win) => {
-      els.winsFeed.appendChild(
+    const sg = Array.isArray(wins) ? wins.filter((w) => w.source !== "indiegala") : (wins?.steamgifts || []);
+    const ig = Array.isArray(wins) ? wins.filter((w) => w.source === "indiegala") : (wins?.indiegala || []);
+    els.winsFeedSg.innerHTML = "";
+    els.winsFeedIg.innerHTML = "";
+    sg.forEach((win) => {
+      els.winsFeedSg.appendChild(
         createCardElement({
           title: win.name,
-          subtitle: win.source === "indiegala" ? "IndieGala win" : "SteamGifts win",
+          subtitle: "SteamGifts win",
           image_url: win.image_url,
           status: "won",
-          source: win.source,
+          source: win.source || "steamgifts",
           url: win.url,
         })
       );
     });
-    syncEmpty(els.winsFeed, els.winsEmpty);
+    ig.forEach((win) => {
+      els.winsFeedIg.appendChild(
+        createCardElement({
+          title: win.name,
+          subtitle: "IndieGala win",
+          image_url: win.image_url,
+          status: "won",
+          source: "indiegala",
+          url: win.url,
+        })
+      );
+    });
+    syncEmpty(els.winsFeedSg, els.winsEmptySg);
+    syncEmpty(els.winsFeedIg, els.winsEmptyIg);
   }
 
   function renderEntered(items) {
-    els.enteredFeed.innerHTML = "";
-    (items || []).forEach((item) => {
-      els.enteredFeed.appendChild(
+    const sg = Array.isArray(items)
+      ? items.filter((i) => i.source !== "indiegala")
+      : (items?.steamgifts || []);
+    const ig = Array.isArray(items)
+      ? items.filter((i) => i.source === "indiegala")
+      : (items?.indiegala || []);
+    els.enteredFeedSg.innerHTML = "";
+    els.enteredFeedIg.innerHTML = "";
+    sg.forEach((item) => {
+      els.enteredFeedSg.appendChild(
         createCardElement({
           kind: "entered",
           title: item.name,
           subtitle: `${item.cost}P`,
           image_url: item.image_url,
           status: "entered",
+          source: item.source || "steamgifts",
           ends_text: item.ends_text || item.remaining_label,
           code: item.code,
           xsrf_token: item.xsrf_token,
@@ -377,7 +408,25 @@
         })
       );
     });
-    syncEmpty(els.enteredFeed, els.enteredEmpty);
+    ig.forEach((item) => {
+      els.enteredFeedIg.appendChild(
+        createCardElement({
+          kind: "entered",
+          title: item.name,
+          subtitle: `${item.cost} iS`,
+          image_url: item.image_url,
+          status: "entered",
+          source: "indiegala",
+          ends_text: item.ends_text || item.remaining_label,
+          code: item.code,
+          xsrf_token: item.xsrf_token,
+          entries_count: item.entries_count,
+          entered_label: item.entered_label,
+        })
+      );
+    });
+    syncEmpty(els.enteredFeedSg, els.enteredEmptySg);
+    syncEmpty(els.enteredFeedIg, els.enteredEmptyIg);
   }
 
   function applySettings(settings) {
@@ -389,6 +438,7 @@
     els.refreshCombo.value = String(settings.refresh_delay_minutes ?? 10);
     els.maxPagesSpin.value = settings.max_pages ?? 5;
     els.maxEndHoursSpin.value = settings.max_giveaway_end_hours ?? 3;
+    if (els.minPointsSpin) els.minPointsSpin.value = settings.min_points ?? 0;
     els.indiegalaDelaySpin.value = settings.indiegala_entry_delay ?? 5;
     els.indiegalaMinCostSpin.value = settings.indiegala_min_cost ?? 0;
     applyingSettings = false;
@@ -494,6 +544,23 @@
     });
   }
 
+  // Subtabs (SteamGifts / IndieGala)
+  document.querySelectorAll(".subtabs").forEach((group) => {
+    group.querySelectorAll(".subtab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const target = tab.dataset.subtab;
+        group.querySelectorAll(".subtab").forEach((t) =>
+          t.classList.toggle("active", t === tab)
+        );
+        const parent = group.parentElement;
+        if (!parent) return;
+        parent.querySelectorAll(":scope > .subtab-panel").forEach((panel) => {
+          panel.classList.toggle("active", panel.id === target);
+        });
+      });
+    });
+  });
+
   // Tabs
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -511,7 +578,7 @@
         refreshEntered();
       }
       if (name === "wins") {
-        api("/api/wins").then(renderWins).catch((error) => toast(error.message, true));
+        refreshWins();
       }
     });
   });
@@ -582,6 +649,12 @@
     saveSettingsPatch({ max_giveaway_end_hours: Number(els.maxEndHoursSpin.value) });
   });
 
+  if (els.minPointsSpin) {
+    els.minPointsSpin.addEventListener("change", () => {
+      saveSettingsPatch({ min_points: Number(els.minPointsSpin.value) });
+    });
+  }
+
   els.indiegalaDelaySpin.addEventListener("change", () => {
     saveSettingsPatch({ indiegala_entry_delay: Number(els.indiegalaDelaySpin.value) });
   });
@@ -631,7 +704,7 @@
       });
       silver = data.silver;
       updateBalances();
-      toast(`IndieGala OK · ${data.username}`);
+      toast(`IndieGala OK · ${data.username} · ${data.silver} silver`);
     } catch (error) {
       toast(error.message, true);
     }
@@ -649,7 +722,22 @@
     }
   }
 
+  async function refreshWins() {
+    if (els.refreshWinsBtn) els.refreshWinsBtn.disabled = true;
+    try {
+      const items = await api("/api/wins");
+      renderWins(items);
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      if (els.refreshWinsBtn) els.refreshWinsBtn.disabled = false;
+    }
+  }
+
   els.refreshEnteredBtn.addEventListener("click", refreshEntered);
+  if (els.refreshWinsBtn) {
+    els.refreshWinsBtn.addEventListener("click", refreshWins);
+  }
 
   async function loadCookies() {
     try {

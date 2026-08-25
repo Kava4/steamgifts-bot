@@ -3,6 +3,7 @@ cookie.txt
 settings.json
 indiegala_cookie.txt
 known_wins.json
+indiegala_entered.json
 data/
 *.tgz
 

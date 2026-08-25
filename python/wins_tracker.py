@@ -98,7 +98,11 @@ class WinsTracker:
         wins.sort(key=lambda item: item.detected_at or "", reverse=True)
         return wins
 
-    def sync_wins(self, current: list[WonGiveawayInfo]) -> list[WonGiveawayInfo]:
+    def sync_wins(
+        self,
+        current: list[WonGiveawayInfo],
+        sources: list[str] | tuple[str, ...] | None = None,
+    ) -> list[WonGiveawayInfo]:
         """Keep only unclaimed wins and return newly discovered ones to notify."""
         is_first = not self.baseline_done
         new_wins: list[WonGiveawayInfo] = []
@@ -111,7 +115,11 @@ class WinsTracker:
             source = info.source if info.source in self._wins else "steamgifts"
             current_by_source[source][info.code] = info
 
-        for source in ("steamgifts", "indiegala"):
+        sources_to_sync = list(sources) if sources else ["steamgifts", "indiegala"]
+
+        for source in sources_to_sync:
+            if source not in self._wins:
+                continue
             current_codes = current_by_source[source]
 
             for code in list(self._wins[source].keys()):

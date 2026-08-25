@@ -1,12 +1,12 @@
-from __future__ import annotations
-
 import hashlib
 import hmac
 import os
+import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import (
+    Body,
     Depends,
     FastAPI,
     HTTPException,
@@ -64,6 +64,7 @@ class SettingsPayload(BaseModel):
     refresh_delay_minutes: Optional[int] = None
     max_pages: Optional[int] = None
     max_giveaway_end_hours: Optional[int] = None
+    min_points: Optional[int] = None
     enable_indiegala_beta: Optional[bool] = None
     indiegala_entry_delay: Optional[int] = None
     indiegala_min_cost: Optional[int] = None
@@ -84,6 +85,35 @@ class LoginPayload(BaseModel):
 
 class IndieGalaTestPayload(BaseModel):
     cookie: str = ""
+    account_id: str = ""
+
+
+class BrowserLoginStartPayload(BaseModel):
+    id: str = ""
+
+
+class BrowserLoginCompletePayload(BaseModel):
+    token: str = Field(min_length=8)
+    ok: bool = True
+    cookie: str = ""
+    message: str = ""
+
+
+class AccountPayload(BaseModel):
+    id: str = ""
+    name: str = "Account"
+    platform: str = "steamgifts"
+    enabled: Optional[bool] = None
+    cookie: Optional[str] = None
+    proxy: Optional[str] = None
+
+
+class StartPayload(BaseModel):
+    mode: str = "all"
+
+
+class AccountIdPayload(BaseModel):
+    id: str = ""
 
 
 def create_app() -> FastAPI:
@@ -200,18 +230,77 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="Nothing to save")
         return result
 
-    @app.post("/api/bot/start")
-    async def bot_start(_: None = Depends(require_auth)) -> dict[str, Any]:
+    @app.get("/api/accounts")
+    async def get_accounts(_: None = Depends(require_auth)) -> dict[str, Any]:
+        return state.list_accounts()
+
+    @app.get("/api/accounts/{account_id}")
+    async def get_account_detail(
+        account_id: str, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
         try:
-            state.start_bot()
+            return state.get_account_detail(account_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @app.post("/api/accounts")
+    async def post_account(
+        payload: AccountPayload, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        data = payload.model_dump(exclude_none=True)
+        try:
+            return state.save_account(data)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
-        return {"running": True}
+
+    @app.post("/api/accounts/active")
+    async def post_active_account(
+        payload: AccountIdPayload, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        try:
+            return state.activate_account(payload.id)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/accounts/delete")
+    async def post_delete_account(
+        payload: AccountIdPayload, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        try:
+            return state.remove_account(payload.id)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/accounts/prune")
+    async def post_prune_accounts(_: None = Depends(require_auth)) -> dict[str, Any]:
+        return state.prune_accounts()
+
+    @app.post("/api/accounts/free-proxy")
+    async def post_free_proxy(
+        payload: AccountIdPayload, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(state.assign_free_proxy, payload.id)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+    @app.post("/api/bot/start")
+    async def bot_start(
+        payload: StartPayload = Body(default_factory=StartPayload),
+        _: None = Depends(require_auth),
+    ) -> dict[str, Any]:
+        try:
+            state.start_bot(payload.mode)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return {"running": True, "running_mode": state.running_mode}
 
     @app.post("/api/bot/stop")
     async def bot_stop(_: None = Depends(require_auth)) -> dict[str, Any]:
         state.stop_bot()
-        return {"running": False}
+        return {"running": False, "running_mode": ""}
 
     @app.post("/api/points")
     async def fetch_points(_: None = Depends(require_auth)) -> dict[str, Any]:
@@ -227,14 +316,52 @@ def create_app() -> FastAPI:
         payload: IndieGalaTestPayload, _: None = Depends(require_auth)
     ) -> dict[str, Any]:
         try:
-            return state.test_indiegala(payload.cookie or None)
+            return state.test_indiegala(
+                payload.cookie or None,
+                account_id=payload.account_id or "",
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(status_code=500, detail=str(error)) from error
+
+    @app.post("/api/indiegala/browser-login/start")
+    async def indiegala_browser_login_start(
+        payload: BrowserLoginStartPayload, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        try:
+            return state.start_indiegala_browser_login(payload.id)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.get("/api/indiegala/browser-login/status")
+    async def indiegala_browser_login_status(
+        token: str, _: None = Depends(require_auth)
+    ) -> dict[str, Any]:
+        try:
+            return state.indiegala_browser_login_status(token)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @app.post("/api/indiegala/browser-login/complete")
+    async def indiegala_browser_login_complete(
+        payload: BrowserLoginCompletePayload,
+    ) -> dict[str, Any]:
+        # Token is the auth — helper on the PC has no WebUI session cookie.
+        try:
+            return state.complete_indiegala_browser_login(
+                payload.token,
+                ok=payload.ok,
+                cookie=payload.cookie,
+                message=payload.message,
+            )
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         except Exception as error:
             raise HTTPException(status_code=500, detail=str(error)) from error
 
     @app.get("/api/entered")
-    async def get_entered(_: None = Depends(require_auth)) -> list[dict[str, Any]]:
+    async def get_entered(_: None = Depends(require_auth)) -> dict[str, Any]:
         try:
             return state.list_entered()
         except ValueError as error:
@@ -255,7 +382,7 @@ def create_app() -> FastAPI:
         return {"ok": True, "code": code}
 
     @app.get("/api/wins")
-    async def get_wins(_: None = Depends(require_auth)) -> list[dict[str, Any]]:
+    async def get_wins(_: None = Depends(require_auth)) -> dict[str, Any]:
         return state.list_wins()
 
     @app.post("/api/manual")

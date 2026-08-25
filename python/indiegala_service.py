@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import unquote
@@ -7,7 +8,7 @@ from urllib.parse import unquote
 from bs4 import BeautifulSoup
 
 from http_client import HttpClient
-from steamgifts_service import GiveawayInfo, WonGiveawayInfo
+from steamgifts_service import EnteredGiveawayInfo, GiveawayInfo, WonGiveawayInfo
 
 BASE_URL = "https://www.indiegala.com"
 JOIN_PATTERN = re.compile(
@@ -34,7 +35,8 @@ def _parse_cookie_pairs(raw: str) -> dict[str, str]:
             continue
         key, value = part.split("=", 1)
         key = key.strip().lower()
-        value = unquote(value.strip())
+        # Keep raw cookie values — unquoting can break Django sessionids.
+        value = value.strip()
         if key:
             cookies[key] = value
 
@@ -52,7 +54,14 @@ def _parse_cookie_json(raw: str) -> dict[str, str]:
         name = str(item.get("name", "")).strip().lower()
         value = item.get("value", "")
         if name and value is not None and str(value):
-            cookies[name] = unquote(str(value))
+            # Prefer raw export value; only unquote if it clearly looks encoded.
+            text = str(value)
+            if "%" in text:
+                try:
+                    text = unquote(text)
+                except Exception:
+                    pass
+            cookies[name] = text
 
     return cookies
 
@@ -74,7 +83,7 @@ def parse_indiegala_cookie(raw: str) -> tuple[str, str]:
         cookies = _parse_cookie_pairs(text)
     elif "=" in text:
         key, value = text.split("=", 1)
-        cookies[key.strip().lower()] = unquote(value.strip())
+        cookies[key.strip().lower()] = value.strip()
     else:
         cookies["sessionid"] = text
 
@@ -84,7 +93,7 @@ def parse_indiegala_cookie(raw: str) -> tuple[str, str]:
     if not sessionid:
         raise ValueError(
             "IndieGala cookie must include sessionid "
-            "(paste JSON export or sessionid=...; csrftoken=...)."
+            "(paste Cookie-Editor JSON export for indiegala.com)."
         )
 
     parts: list[str] = []
@@ -101,8 +110,62 @@ def parse_indiegala_cookie(raw: str) -> tuple[str, str]:
 
 
 def format_indiegala_cookie_storage(raw: str) -> str:
-    cookie_header, _ = parse_indiegala_cookie(raw)
+    """Validate cookie and store Cookie-Editor JSON as-is when possible."""
+    text = raw.strip()
+    if not text:
+        raise ValueError("IndieGala cookie is empty.")
+    # Keep full JSON export — preserves all cookies for this account.
+    if text.startswith("["):
+        parse_indiegala_cookie(text)
+        return text
+    cookie_header, _ = parse_indiegala_cookie(text)
     return cookie_header
+
+
+def parse_ig_ends_at(ends_label: str) -> int:
+    """Best-effort absolute end time from labels like '5 minutes left'."""
+    text = (ends_label or "").strip().lower()
+    if not text:
+        return 0
+    match = re.search(
+        r"(\d+)\s*(second|minute|hour|day|week)s?\s*(left|remaining)?",
+        text,
+    )
+    if not match:
+        return 0
+    amount = int(match.group(1))
+    unit = match.group(2)
+    multipliers = {
+        "second": 1,
+        "minute": 60,
+        "hour": 3600,
+        "day": 86400,
+        "week": 604800,
+    }
+    return int(time.time()) + amount * multipliers[unit]
+
+
+def _card_image_url(element) -> str:
+    image_el = element.select_one("img[data-img-src]")
+    if image_el is not None:
+        return image_el.get("data-img-src", "") or ""
+    image_el = element.select_one("img[src]")
+    return image_el.get("src", "") if image_el else ""
+
+
+def _card_cost(element) -> int:
+    price_el = element.select_one(".items-list-item-data-button a")
+    if price_el is None:
+        price_el = element.select_one("[data-price]")
+    if price_el is None:
+        return 0
+    raw_price = price_el.get("data-price") or price_el.get_text(strip=True)
+    return int(re.sub(r"[^0-9]", "", raw_price) or "0")
+
+
+def _card_ends_label(element) -> str:
+    ends_label_el = element.select_one(".items-list-item-data-left-bottom")
+    return ends_label_el.get_text(strip=True) if ends_label_el else ""
 
 
 def parse_giveaway_item(element) -> Optional[GiveawayInfo]:
@@ -132,28 +195,72 @@ def parse_giveaway_item(element) -> Optional[GiveawayInfo]:
     if "items-list-item-data-not-purchasable" in button_classes:
         return None
 
-    price_el = element.select_one(".items-list-item-data-button a")
-    cost = 0
-    if price_el is not None:
-        raw_price = price_el.get("data-price") or price_el.get_text(strip=True)
-        cost = int(re.sub(r"[^0-9]", "", raw_price) or "0")
-
-    image_el = element.select_one("img[data-img-src]")
-    image_url = image_el.get("data-img-src", "") if image_el else ""
-
-    ends_label_el = element.select_one(".items-list-item-data-left-bottom")
-    ends_label = ends_label_el.get_text(strip=True) if ends_label_el else ""
-
+    ends_label = _card_ends_label(element)
     return GiveawayInfo(
         name=name,
         code=giveaway_id,
-        cost=cost,
-        image_url=image_url,
+        cost=_card_cost(element),
+        image_url=_card_image_url(element),
         is_entered=False,
+        ends_at=parse_ig_ends_at(ends_label) or None,
         ends_label=ends_label,
         source="indiegala",
         join_token=join_token,
     )
+
+
+def parse_entered_item(element) -> Optional[EnteredGiveawayInfo]:
+    """
+    IndieGala marks joined giveaways by removing the clickable ticket control.
+    'SINGLE TICKET' is the giveaway type, not an entered flag.
+    """
+    if element.select_one(".items-list-item-ticket-click") is not None:
+        return None
+
+    title_el = element.select_one(".items-list-item-title a")
+    if title_el is None:
+        return None
+
+    name = title_el.get_text(strip=True)
+    href = title_el.get("href", "")
+    match = GIVEAWAY_CARD_PATTERN.search(href)
+    if not name or not match:
+        return None
+
+    giveaway_id = match.group(1)
+    ends_label = _card_ends_label(element)
+    url = href if href.startswith("http") else f"{BASE_URL}{href}"
+    entries_el = element.select_one(".items-list-item-data-right-bottom")
+    entries_count = ""
+    if entries_el is not None:
+        entries_count = re.sub(r"[^0-9]", "", entries_el.get_text(" ", strip=True))
+
+    return EnteredGiveawayInfo(
+        name=name,
+        code=giveaway_id,
+        cost=_card_cost(element),
+        image_url=_card_image_url(element),
+        ends_at=parse_ig_ends_at(ends_label),
+        remaining_label=ends_label,
+        entries_count=entries_count,
+        entered_label="IndieGala",
+        xsrf_token="",
+        source="indiegala",
+        url=url,
+    )
+
+
+def parse_entered_html(html: str) -> list[EnteredGiveawayInfo]:
+    soup = BeautifulSoup(html, "html.parser")
+    entered: list[EnteredGiveawayInfo] = []
+    seen: set[str] = set()
+    for item in soup.select(".items-list-item"):
+        info = parse_entered_item(item)
+        if info is None or info.code in seen:
+            continue
+        seen.add(info.code)
+        entered.append(info)
+    return entered
 
 
 def parse_giveaways_html(html: str) -> list[GiveawayInfo]:
@@ -239,10 +346,11 @@ def parse_won_items_html(html: str) -> list[WonGiveawayInfo]:
 
 
 class IndieGalaService:
-    def __init__(self, cookie: str):
+    def __init__(self, cookie: str, proxy: str = ""):
         self.cookie_header, self.csrf_token = parse_indiegala_cookie(cookie)
-        self.client = HttpClient()
+        self.client = HttpClient(proxy=proxy)
         self.silver = 0
+        self.proxy = (proxy or "").strip()
 
     def _ajax_headers(self, content_type: str = "application/json") -> dict[str, str]:
         headers = {
@@ -322,6 +430,7 @@ class IndieGalaService:
             f"{BASE_URL}/ajax/user/get-data",
             method="POST",
             headers=self._json_headers(),
+            data="{}",
         )
 
         if response.status != 200:
@@ -332,19 +441,38 @@ class IndieGalaService:
         except json.JSONDecodeError as error:
             raise RuntimeError("IndieGala returned invalid JSON.") from error
 
+        if payload.get("user_is_logged") is False:
+            raise RuntimeError(
+                "IndieGala session is not logged in. "
+                "In the browser, log into THAT account, open indiegala.com, "
+                "export cookies with Cookie-Editor (JSON), then Save account. "
+                "Use a separate browser profile per IndieGala account."
+            )
+
         user = payload.get("user") or payload
         if not isinstance(user, dict):
             raise RuntimeError("IndieGala session is not logged in.")
 
-        current_user = user.get("current_user") or {}
-        username = current_user.get("username", "")
-        if not username and payload.get("status") not in (None, "ok"):
+        current_user = user.get("current_user") or payload.get("current_user") or {}
+        if not isinstance(current_user, dict):
+            current_user = {}
+
+        username = str(current_user.get("username") or "").strip()
+        self.silver = int(
+            user.get("silver_coins_tot")
+            or payload.get("silver_coins_tot")
+            or 0
+        )
+        if not username and self.silver <= 0 and payload.get("user_is_logged") is not True:
             raise RuntimeError(
-                payload.get("status", "IndieGala session is not logged in.")
+                "IndieGala session is not logged in. "
+                "Re-export Cookie-Editor JSON while logged in on indiegala.com."
             )
 
-        self.silver = int(user.get("silver_coins_tot") or 0)
-        return IndieGalaAccountInfo(silver=self.silver, username=username)
+        return IndieGalaAccountInfo(
+            silver=self.silver,
+            username=username or "IndieGala",
+        )
 
     def fetch_giveaways_page(
         self,
@@ -356,6 +484,33 @@ class IndieGalaService:
         path = f"/giveaways/ajax/{page}/{sort}/{order}/level/{level}"
         payload = self._fetch_json(path)
         return parse_giveaways_html(payload.get("html", ""))
+
+    def fetch_entered_giveaways(
+        self,
+        max_pages: int = 5,
+        sort: str = "expiry",
+        order: str = "asc",
+        level: int = 0,
+    ) -> list[EnteredGiveawayInfo]:
+        """
+        IndieGala has no public /entered feed. When logged in, joined cards
+        lose `.items-list-item-ticket-click` on the listing AJAX pages.
+        """
+        self.fetch_account()
+        found: list[EnteredGiveawayInfo] = []
+        seen: set[str] = set()
+        pages = max(1, min(int(max_pages or 5), 20))
+
+        for page in range(1, pages + 1):
+            path = f"/giveaways/ajax/{page}/{sort}/{order}/level/{level}"
+            payload = self._fetch_json(path)
+            for item in parse_entered_html(payload.get("html", "")):
+                if item.code in seen:
+                    continue
+                seen.add(item.code)
+                found.append(item)
+
+        return found
 
     def join_giveaway(self, giveaway: GiveawayInfo) -> int:
         self.ensure_csrf_token()

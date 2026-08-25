@@ -311,12 +311,52 @@ textarea {
   margin-bottom: 12px;
 }
 
-.empty-state {
-  color: #525252;
-  font-size: 13px;
-  line-height: 1.5;
-  padding: 48px 32px;
-  text-align: center;
+.feed-section {
+  margin-bottom: 18px;
+}
+
+.empty-state.compact {
+  padding: 18px 12px;
+}
+
+.subtabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0;
+}
+
+.subtab {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  padding: 10px 16px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.subtab:hover:not(.active) {
+  color: #d4d4d4;
+  background: #141414;
+}
+
+.subtab.active {
+  color: #f5f5f5;
+  border-bottom-color: var(--accent-green);
+  background: #161616;
+}
+
+.subtab-panel {
+  display: none;
+}
+
+.subtab-panel.active {
+  display: block;
 }
 
 .hidden {
@@ -601,6 +641,42 @@ textarea {
   color: #f0c0c0;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  padding: 20px;
+}
+
+.modal-backdrop.hidden {
+  display: none;
+}
+
+.modal-card {
+  width: min(560px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 18px 14px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.modal-title {
+  font-size: 15px;
+  font-weight: 650;
+  margin-bottom: 8px;
+}
+
+.textarea.mono {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .login-body {
   display: flex;
   align-items: center;
@@ -625,6 +701,82 @@ textarea {
   margin: 0;
   color: #fca5a5;
   font-size: 12px;
+}
+
+.accounts-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin: 10px 0 4px;
+}
+
+.accounts-column {
+  min-width: 0;
+}
+
+.accounts-column .btn {
+  width: 100%;
+}
+
+@media (max-width: 700px) {
+  .accounts-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.section-subtitle {
+  margin: 8px 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.accounts-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+
+.account-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  min-width: 110px;
+}
+
+.account-chip strong {
+  font-size: 12px;
+}
+
+.account-chip span {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.account-chip.active {
+  border-color: #3d5c3f;
+  background: #1a2e1a;
+}
+
+.account-chip.is-active-account strong::after {
+  content: " · active";
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+.settings-section a {
+  color: var(--accent-green);
 }
 
 @media (max-width: 900px) {

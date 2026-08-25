@@ -1,5 +1,6 @@
 import platform
 import subprocess
+import time
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -10,6 +11,9 @@ USER_AGENT = (
     "Chrome/131.0.0.0 Safari/537.36"
 )
 
+# Transient curl failures (timeouts / TLS / dropped connection).
+RETRYABLE_CURL_CODES = {7, 28, 35, 52, 55, 56}
+
 
 @dataclass
 class HttpResponse:
@@ -19,6 +23,18 @@ class HttpResponse:
 
 
 class HttpClient:
+    def __init__(
+        self,
+        proxy: str = "",
+        connect_timeout: int = 20,
+        max_time: int = 60,
+        retries: int = 3,
+    ):
+        self.proxy = (proxy or "").strip()
+        self.connect_timeout = max(1, int(connect_timeout))
+        self.max_time = max(self.connect_timeout, int(max_time))
+        self.retries = max(1, int(retries))
+
     def request(
         self,
         url: str,
@@ -26,11 +42,45 @@ class HttpClient:
         headers: Optional[Dict[str, str]] = None,
         data: Optional[str] = None,
     ) -> HttpResponse:
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self.retries + 1):
+            try:
+                return self._request_once(url, method, headers, data)
+            except RuntimeError as error:
+                last_error = error
+                message = str(error)
+                retryable = any(
+                    f"curl exited with code {code}" in message
+                    for code in RETRYABLE_CURL_CODES
+                ) or "SSL" in message or "timed out" in message.lower()
+                if not retryable or attempt >= self.retries:
+                    if self.proxy and retryable:
+                        raise RuntimeError(
+                            f"{message} (via proxy {self.proxy} — "
+                            "clear/replace proxy in Settings if this keeps happening)"
+                        ) from error
+                    raise
+                time.sleep(min(1.5 * attempt, 4.0))
+        assert last_error is not None
+        raise last_error
+
+    def _request_once(
+        self,
+        url: str,
+        method: str,
+        headers: Optional[Dict[str, str]],
+        data: Optional[str],
+    ) -> HttpResponse:
         method = method.upper()
         args = [
             "-sS",
             "-L",
             "--compressed",
+            "--http1.1",
+            "--connect-timeout",
+            str(self.connect_timeout),
+            "--max-time",
+            str(self.max_time),
             "-w",
             "__STATUS__%{http_code}",
             "-A",
@@ -38,6 +88,9 @@ class HttpClient:
             "-X",
             method,
         ]
+
+        if self.proxy:
+            args.extend(["--proxy", self.proxy])
 
         if headers:
             for key, value in headers.items():

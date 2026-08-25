@@ -1,7 +1,9 @@
+import json
 import re
 import time
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import quote_plus
 
 from bs4 import BeautifulSoup
 
@@ -69,6 +71,8 @@ class EnteredGiveawayInfo:
     entries_count: str
     entered_label: str
     xsrf_token: str
+    source: str = "steamgifts"
+    url: str = ""
 
 
 @dataclass
@@ -78,6 +82,14 @@ class WonGiveawayInfo:
     image_url: str
     source: str = "steamgifts"
     url: str = ""
+
+
+@dataclass
+class EntryResult:
+    success: bool
+    points: Optional[int] = None
+    message: str = ""
+    already_entered: bool = False
 
 
 def build_headers(cookie: str) -> dict[str, str]:
@@ -180,6 +192,13 @@ def giveaway_within_end_window(
         return giveaway.source != "steamgifts"
 
     return remaining <= max_hours * 3600
+
+
+def _element_visible(element) -> bool:
+    classes = element.get("class", [])
+    if isinstance(classes, str):
+        classes = classes.split()
+    return "is-hidden" not in classes
 
 
 def parse_giveaway_row(element) -> GiveawayInfo:
@@ -364,12 +383,28 @@ def parse_won_notification_count(html: str) -> Optional[int]:
 
 
 def is_won_row_received(element) -> bool:
-    for col in element.select(".table__column--width-small"):
-        text = col.get_text(" ", strip=True)
-        if "Not Received" in text:
-            return False
-        if text == "Received":
+    """True when SteamGifts shows the gift as already Received."""
+    # Newer interactive feedback widgets keep both states in DOM.
+    received = element.select_one(".table__gift-feedback-received")
+    if received is not None:
+        classes = received.get("class", [])
+        if isinstance(classes, str):
+            classes = classes.split()
+        if "is-hidden" not in classes:
             return True
+
+    # Older / locked feedback uses a faded label with a green check icon.
+    for col in element.select(".table__column--gift-feedback"):
+        label = col.select_one("[data-popup='popup--feedback-locked'], .is-faded")
+        target = label or col
+        text = target.get_text(" ", strip=True)
+        if "Not Received" in text:
+            continue
+        if "Received" in text and target.select_one(
+            ".fa-check-circle, .icon-green.fa-check-circle, i.icon-green"
+        ):
+            return True
+
     return False
 
 
@@ -451,11 +486,12 @@ def parse_page(html: str) -> tuple[int, str, list[GiveawayInfo]]:
 
 
 class SteamgiftsService:
-    def __init__(self, cookie: str):
+    def __init__(self, cookie: str, proxy: str = ""):
         self.cookie = cookie.strip()
-        self.client = HttpClient()
+        self.client = HttpClient(proxy=proxy)
         self.headers = build_headers(self.cookie)
         self.html = ""
+        self.proxy = (proxy or "").strip()
 
     def _fetch(self, url: str) -> str:
         response = self.client.request(url, method="GET", headers=self.headers)
@@ -486,6 +522,110 @@ class SteamgiftsService:
     def fetch_won_giveaways(self) -> list[WonGiveawayInfo]:
         html = self._fetch("https://www.steamgifts.com/giveaways/won")
         return parse_won_page(html)
+
+    def enter_giveaway(self, code: str, xsrf_token: str = "") -> EntryResult:
+        """Open the giveaway page (description visible), then enter via ajax."""
+        code = code.strip()
+        if not code:
+            return EntryResult(success=False, message="Missing giveaway code")
+
+        page_url = f"https://www.steamgifts.com/giveaway/{code}/"
+        html = self._fetch(page_url)
+        soup = BeautifulSoup(html, "html.parser")
+
+        page_token_el = soup.select_one('input[name="xsrf_token"]')
+        token = (
+            page_token_el.get("value", "").strip()
+            if page_token_el is not None
+            else ""
+        ) or xsrf_token.strip()
+        if not token:
+            return EntryResult(success=False, message="Missing XSRF token")
+
+        points_el = soup.select_one(".nav__points")
+        page_points = (
+            int(re.sub(r"[^0-9]", "", points_el.get_text()) or "0")
+            if points_el
+            else None
+        )
+
+        # SteamGifts keeps both insert/delete nodes in the DOM and toggles
+        # visibility with the is-hidden class — never trust raw presence.
+        insert_btn = soup.select_one(".sidebar__entry-insert")
+        delete_btn = soup.select_one(".sidebar__entry-delete")
+        insert_visible = insert_btn is not None and _element_visible(insert_btn)
+        delete_visible = delete_btn is not None and _element_visible(delete_btn)
+
+        if delete_visible and not insert_visible:
+            return EntryResult(
+                success=True,
+                points=page_points,
+                already_entered=True,
+                message="Already entered",
+            )
+
+        if not insert_visible:
+            error_el = soup.select_one(".sidebar__error")
+            if error_el is not None and _element_visible(error_el):
+                message = error_el.get_text(" ", strip=True)
+            else:
+                message = "No enter button on giveaway page"
+            return EntryResult(
+                success=False, points=page_points, message=message
+            )
+
+        form_code_el = soup.select_one(
+            '.sidebar form input[name="code"], form input[name="code"]'
+        )
+        form_code = (
+            form_code_el.get("value", "").strip()
+            if form_code_el is not None
+            else ""
+        )
+        entry_code = form_code or code
+
+        payload = (
+            f"xsrf_token={quote_plus(token)}"
+            f"&do=entry_insert&code={quote_plus(entry_code)}"
+        )
+        headers = dict(self.headers)
+        headers["Referer"] = page_url
+        response = self.client.request(
+            "https://www.steamgifts.com/ajax.php",
+            method="POST",
+            headers=headers,
+            data=payload,
+        )
+
+        if response.status != 200:
+            raise RuntimeError(f"{response.status} - {response.status_text}")
+
+        try:
+            data = json.loads(response.data)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Invalid entry response: {response.data[:200]}"
+            ) from exc
+
+        if not isinstance(data, dict):
+            return EntryResult(success=False, message="Unexpected entry response")
+
+        points_raw = data.get("points")
+        points = (
+            int(re.sub(r"[^0-9]", "", str(points_raw)))
+            if points_raw is not None
+            else page_points
+        )
+
+        if data.get("type") == "success":
+            return EntryResult(success=True, points=points, message="Entered")
+
+        message = (
+            str(data.get("msg") or data.get("message") or data.get("error") or "")
+            .strip()
+            or f"Entry rejected: {data.get('type', 'unknown')}"
+        )
+        return EntryResult(success=False, points=points, message=message)
 
     def remove_entry(self, code: str, xsrf_token: str) -> None:
         payload = f"xsrf_token={xsrf_token}&do=entry_delete&code={code}"

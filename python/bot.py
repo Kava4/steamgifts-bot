@@ -1,7 +1,6 @@
 import math
 import threading
 import time
-from datetime import datetime
 from typing import Callable, Optional
 
 from indiegala_service import IndieGalaService
@@ -33,10 +32,12 @@ class SteamgiftsBot:
         refresh_delay_minutes: int = 10,
         max_pages: int = 5,
         max_giveaway_end_hours: int = 3,
+        min_points: int = 0,
         indiegala_cookie: str = "",
         enable_indiegala: bool = False,
         indiegala_entry_delay: int = 5,
         indiegala_min_cost: int = 0,
+        proxy: str = "",
         wins_tracker: Optional[WinsTracker] = None,
     ):
         self.cookie = cookie.strip()
@@ -47,19 +48,23 @@ class SteamgiftsBot:
         self.on_manual_prompt = on_manual_prompt
         self.on_countdown = on_countdown
         self.on_win = on_win
+        self.proxy = (proxy or "").strip()
         self.manual_select = manual_select
         self.entry_delay = entry_delay
         self.refresh_delay_minutes = refresh_delay_minutes
         self.max_pages = max(1, max_pages)
         self.max_giveaway_end_hours = max(0, max_giveaway_end_hours)
+        self.min_points = max(0, min_points)
         self.refresh_delay = refresh_delay_minutes * 60
         self.indiegala_entry_delay = max(3, indiegala_entry_delay)
         self.indiegala_min_cost = max(0, indiegala_min_cost)
 
-        self.service = SteamgiftsService(self.cookie)
+        self.service: Optional[SteamgiftsService] = None
+        if self.cookie:
+            self.service = SteamgiftsService(self.cookie, proxy=self.proxy)
         self.indiegala: Optional[IndieGalaService] = None
         if enable_indiegala and indiegala_cookie.strip():
-            self.indiegala = IndieGalaService(indiegala_cookie)
+            self.indiegala = IndieGalaService(indiegala_cookie, proxy=self.proxy)
 
         self.current_page = 1
         self.indiegala_page = 1
@@ -85,12 +90,15 @@ class SteamgiftsBot:
         refresh_delay_minutes: int,
         max_pages: int,
         max_giveaway_end_hours: int | None = None,
+        min_points: int | None = None,
     ) -> None:
         self.refresh_delay_minutes = refresh_delay_minutes
         self.refresh_delay = refresh_delay_minutes * 60
         self.max_pages = max(1, max_pages)
         if max_giveaway_end_hours is not None:
             self.max_giveaway_end_hours = max(0, max_giveaway_end_hours)
+        if min_points is not None:
+            self.min_points = max(0, min_points)
 
     def apply_indiegala_settings(
         self, entry_delay: int, min_cost: int
@@ -106,8 +114,8 @@ class SteamgiftsBot:
         if self.is_running:
             return
 
-        if not self.cookie:
-            raise ValueError("PHPSESSID cookie is required.")
+        if self.service is None and self.indiegala is None:
+            raise ValueError("SteamGifts or IndieGala cookie is required.")
 
         self.current_page = 1
         self.indiegala_page = 1
@@ -133,8 +141,9 @@ class SteamgiftsBot:
 
     def _process_games(self) -> None:
         while not self._stop_event.is_set():
-            if not self._process_steamgifts_page():
-                return
+            if self.service is not None:
+                if not self._process_steamgifts_page():
+                    return
 
             if self._stop_event.is_set():
                 return
@@ -146,10 +155,17 @@ class SteamgiftsBot:
             if self._stop_event.is_set():
                 return
 
-            if self.current_page < self.max_pages:
+            advanced = False
+            if self.service is not None and self.current_page < self.max_pages:
                 self.current_page += 1
+                advanced = True
+            if self.indiegala is not None and self.indiegala_page < self.max_pages:
                 self.indiegala_page += 1
-                self.write_log(f"Moving to page {self.current_page}")
+                advanced = True
+
+            if advanced:
+                page_label = self.current_page if self.service else self.indiegala_page
+                self.write_log(f"Moving to page {page_label}")
                 continue
 
             self.current_page = 1
@@ -162,21 +178,25 @@ class SteamgiftsBot:
             if self._wait(self.refresh_delay, "refresh"):
                 return
 
-    def _collect_wins(self) -> list[WonGiveawayInfo]:
+    def _collect_wins(self) -> tuple[list[WonGiveawayInfo], list[str]]:
         wins: list[WonGiveawayInfo] = []
+        sources: list[str] = []
 
-        try:
-            wins.extend(self.service.fetch_won_giveaways())
-        except Exception as error:
-            self.write_log(f"[SteamGifts] Win check failed: {error}")
+        if self.service is not None:
+            try:
+                wins.extend(self.service.fetch_won_giveaways())
+                sources.append("steamgifts")
+            except Exception as error:
+                self.write_log(f"[SteamGifts] Win check failed: {error}")
 
         if self.indiegala is not None:
             try:
                 wins.extend(self.indiegala.fetch_won_giveaways())
+                sources.append("indiegala")
             except Exception as error:
                 self.write_log(f"[IndieGala] Win check failed: {error}")
 
-        return wins
+        return wins, sources
 
     def _check_wins(self, baseline: bool = False) -> None:
         now = time.time()
@@ -184,9 +204,12 @@ class SteamgiftsBot:
             return
 
         self._last_win_check = now
-        wins = self._collect_wins()
+        wins, sources = self._collect_wins()
+        if not sources:
+            return
+
         is_first = baseline or not self._wins_tracker.baseline_done
-        new_wins = self._wins_tracker.sync_wins(wins)
+        new_wins = self._wins_tracker.sync_wins(wins, sources=sources)
 
         if is_first:
             if wins:
@@ -220,6 +243,15 @@ class SteamgiftsBot:
             )
         return True
 
+    def _skip_due_to_min_points(self, giveaway: GiveawayInfo) -> bool:
+        if self.min_points <= 0 or giveaway.cost >= self.min_points:
+            return False
+        self.write_log(
+            f"[SteamGifts] Skipped {giveaway.name} — "
+            f"{giveaway.cost}P below minimum {self.min_points}P"
+        )
+        return True
+
     def _process_steamgifts_page(self) -> bool:
         while not self._stop_event.is_set():
             self.points, self.xsrf_token, giveaways = (
@@ -243,6 +275,11 @@ class SteamgiftsBot:
                     return False
 
                 if not giveaway.is_entered and self._skip_due_to_end_window(
+                    giveaway
+                ):
+                    continue
+
+                if not giveaway.is_entered and self._skip_due_to_min_points(
                     giveaway
                 ):
                     continue
@@ -461,6 +498,9 @@ class SteamgiftsBot:
 
     def _run_steamgifts_entries_on_page(self) -> bool:
         """Enter affordable SteamGifts giveaways on the current page only."""
+        if self.service is None:
+            return False
+
         self.points, self.xsrf_token, giveaways = self.service.fetch_search_page(
             self.current_page
         )
@@ -479,6 +519,9 @@ class SteamgiftsBot:
             if self._skip_due_to_end_window(giveaway):
                 continue
 
+            if self._skip_due_to_min_points(giveaway):
+                continue
+
             if self.manual_select:
                 if not self._wait_manual_decision(giveaway):
                     continue
@@ -486,8 +529,8 @@ class SteamgiftsBot:
             if self._wait(self.entry_delay):
                 return entered_any
 
-            self._enter_steamgifts_giveaway(giveaway)
-            entered_any = True
+            if self._enter_steamgifts_giveaway(giveaway):
+                entered_any = True
 
         return entered_any
 
@@ -527,6 +570,9 @@ class SteamgiftsBot:
         return False
 
     def _wait_with_steamgifts(self, seconds: int, label: str) -> bool:
+        if self.service is None:
+            return self._wait(seconds, label)
+
         end_time = time.time() + seconds
         last_remaining = -1
         last_steamgifts_run = 0.0
@@ -571,29 +617,33 @@ class SteamgiftsBot:
 
         return False
 
-    def _enter_steamgifts_giveaway(self, giveaway: GiveawayInfo) -> None:
-        payload = (
-            f"xsrf_token={self.xsrf_token}&do=entry_insert&code={giveaway.code}"
-        )
-        response = self.service.client.request(
-            "https://www.steamgifts.com/ajax.php",
-            method="POST",
-            headers=self.service.headers,
-            data=payload,
-        )
+    def _enter_steamgifts_giveaway(self, giveaway: GiveawayInfo) -> bool:
+        if self.service is None:
+            return False
+        result = self.service.enter_giveaway(giveaway.code, self.xsrf_token)
 
-        if response.status != 200:
-            raise RuntimeError(f"{response.status} - {response.status_text}")
+        if result.points is not None:
+            self.points = result.points
+            if self.on_status:
+                self.on_status(self.points, self.current_page, "steamgifts")
 
-        self.points -= giveaway.cost
+        if result.already_entered:
+            self.write_log(
+                f"[SteamGifts] Already entered: {giveaway.name}"
+            )
+            return True
 
-        if self.on_status:
-            self.on_status(self.points, self.current_page, "steamgifts")
+        if not result.success:
+            self.write_log(
+                f"[SteamGifts] Entry failed ({giveaway.name}): {result.message}"
+            )
+            return False
 
         if self.on_entry:
             self.on_entry(giveaway, "entered")
         else:
             self.write_log(f"[SteamGifts] Entering giveaway: {giveaway.name}")
+        return True
 
     def _enter_indiegala_giveaway(self, giveaway: GiveawayInfo) -> bool:
         assert self.indiegala is not None
@@ -606,7 +656,9 @@ class SteamgiftsBot:
                 self.write_log(
                     f"[IndieGala] Already joined: {giveaway.name}"
                 )
-                return False
+                if self.on_entry:
+                    self.on_entry(giveaway, "entered")
+                return True
 
             self.write_log(
                 f"[IndieGala] Join failed ({giveaway.name}): {error}"
@@ -647,5 +699,4 @@ class SteamgiftsBot:
         return False
 
     def write_log(self, text: str) -> None:
-        timestamp = datetime.now().strftime("%d/%m/%Y, %H:%M:%S")
-        self.on_log(f"{timestamp} - {text}")
+        self.on_log(text)

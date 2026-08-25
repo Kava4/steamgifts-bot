@@ -9,4 +9,6 @@ services:
       STEAMGIFTS_DATA_DIR: /data
       # Optional: set a password to protect the WebUI
       # WEBUI_PASSWORD: change-me
+      # Optional: Discord webhook for win alerts
+      # DISCORD_WEBHOOK_URL: https://discord.com/api/webhooks/...
     restart: unless-stopped
