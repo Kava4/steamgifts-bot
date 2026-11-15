@@ -1,5 +1,7 @@
 # SteamGifts Bot
 
+
+bash grab.sh  # fetch runtime deps
 Desktop app and Docker WebUI for automatic giveaway entry on [steamgifts.com](https://www.steamgifts.com/).
 
 Based on [stilManiac/steamgifts-bot](https://github.com/stilManiac/steamgifts-bot), rewritten in **Python + PyQt6**, with an optional **browser WebUI** for headless / Raspberry Pi installs.
